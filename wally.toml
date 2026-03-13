@@ -1,0 +1,11 @@
+[package]
+name = "audioscape/sdk"
+version = "0.1.0"
+registry = "https://github.com/UpliftGames/wally-index"
+realm = "shared"
+license = "MIT"
+description = "Luau SDK for the AudioScape Developer API — search, browse, and discover music for Roblox experiences."
+authors = ["AudioScape Inc."]
+include = ["src", "default.project.json", "LICENSE"]
+
+[dependencies]
