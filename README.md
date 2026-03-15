@@ -4,11 +4,13 @@ A Luau SDK for the [AudioScape Developer API](https://developer.audioscape.ai) â
 
 ## Installation
 
+### Wally
+
 Add to your `wally.toml`:
 
 ```toml
 [dependencies]
-AudioScape = "audioscape/sdk@0.1.0"
+AudioScape = "this-fifo/audioscape-sdk@0.2.0"
 ```
 
 Then run:
@@ -16,6 +18,14 @@ Then run:
 ```bash
 wally install
 ```
+
+### Roblox Model
+
+Download `AudioScape.rbxm` from the [latest release](https://github.com/AudioScapeInc/sdk/releases/latest) and drop it into `ReplicatedStorage` in Roblox Studio.
+
+### Manual
+
+Copy `src/init.luau` into your project. If using Rojo, add it to your project tree.
 
 ## Quick Start
 
@@ -42,6 +52,17 @@ if result then
 end
 ```
 
+## Telemetry
+
+The SDK automatically sends your game's Universe ID and Place ID with every request to help you track usage across your experiences. You can also pass an optional `playerId` to tie requests to specific players:
+
+```lua
+local result, err = client:search({
+    query = "epic battle music",
+    playerId = player.UserId,
+})
+```
+
 ## API
 
 ### `AudioScape.new(apiKey: string)`
@@ -61,6 +82,7 @@ local result, err = client:search({
     query = "epic orchestral battle music",  -- required
     limit = 20,                              -- optional (default: 20, max: 100)
     offset = 0,                              -- optional
+    playerId = player.UserId,                -- optional
     filters = {                              -- optional
         genres = { "electronic", "pop" },
         duration = { min = 60, max = 180 },
@@ -75,9 +97,10 @@ Find tracks that sound similar to a given track.
 
 ```lua
 local result, err = client:similar({
-    asset_id = "123456789",  -- required
-    limit = 10,              -- optional
-    offset = 0,              -- optional
+    asset_id = "123456789",      -- required
+    limit = 10,                  -- optional
+    offset = 0,                  -- optional
+    playerId = player.UserId,    -- optional
 })
 -- result = { tracks, meta }
 ```
