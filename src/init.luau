@@ -15,6 +15,7 @@ export type SearchOptions = {
 	query: string,
 	limit: number?,
 	offset: number?,
+	playerId: number?,
 	filters: {
 		genres: { string }?,
 		duration: {
@@ -28,6 +29,7 @@ export type SimilarOptions = {
 	asset_id: string,
 	limit: number?,
 	offset: number?,
+	playerId: number?,
 }
 
 export type BrowseOptions = {
@@ -35,6 +37,7 @@ export type BrowseOptions = {
 	name: string?,
 	limit: number?,
 	offset: number?,
+	playerId: number?,
 }
 
 export type Track = {
@@ -96,7 +99,11 @@ export type BrowseTracksResult = {
 local AudioScape = {}
 AudioScape.__index = AudioScape
 
-type AudioScapeClient = typeof(setmetatable({} :: { _apiKey: string }, AudioScape))
+type AudioScapeClient = typeof(setmetatable({} :: {
+	_apiKey: string,
+	_universeId: string,
+	_placeId: string,
+}, AudioScape))
 
 local function formatError(statusCode: number, body: string): string
 	if statusCode == 401 then
@@ -115,16 +122,23 @@ local function formatError(statusCode: number, body: string): string
 	return "Request failed (" .. tostring(statusCode) .. ")"
 end
 
-local function request(self: AudioScapeClient, path: string, body: { [string]: any }): (any, string?)
+local function request(self: AudioScapeClient, path: string, body: { [string]: any }, playerId: number?): (any, string?)
 	local jsonBody = HttpService:JSONEncode(body)
+
+	local headers: { [string]: string } = {
+		["x-api-key"] = self._apiKey,
+		["Content-Type"] = "application/json",
+		["X-Universe-Id"] = self._universeId,
+		["X-Place-Id"] = self._placeId,
+	}
+	if playerId then
+		headers["X-Player-Id"] = tostring(playerId)
+	end
 
 	local ok, result = pcall(HttpService.RequestAsync, HttpService, {
 		Url = BASE_URL .. path,
 		Method = "POST",
-		Headers = {
-			["x-api-key"] = self._apiKey,
-			["Content-Type"] = "application/json",
-		},
+		Headers = headers,
 		Body = jsonBody,
 	})
 
@@ -149,6 +163,8 @@ function AudioScape.new(apiKey: string): AudioScapeClient
 
 	local self = setmetatable({
 		_apiKey = apiKey,
+		_universeId = tostring(game.GameId),
+		_placeId = tostring(game.PlaceId),
 	}, AudioScape)
 
 	return self
@@ -166,7 +182,7 @@ function AudioScape.search(self: AudioScapeClient, options: SearchOptions): (Sea
 		filters = options.filters,
 	}
 
-	return request(self, "/v1/search", body)
+	return request(self, "/v1/search", body, options.playerId)
 end
 
 function AudioScape.similar(self: AudioScapeClient, options: SimilarOptions): (SimilarResult?, string?)
@@ -180,7 +196,7 @@ function AudioScape.similar(self: AudioScapeClient, options: SimilarOptions): (S
 		offset = options.offset,
 	}
 
-	return request(self, "/v1/similar", body)
+	return request(self, "/v1/similar", body, options.playerId)
 end
 
 function AudioScape.browse(self: AudioScapeClient, options: BrowseOptions): (BrowseListResult | BrowseTracksResult | nil, string?)
@@ -195,7 +211,7 @@ function AudioScape.browse(self: AudioScapeClient, options: BrowseOptions): (Bro
 		offset = options.offset,
 	}
 
-	return request(self, "/v1/browse", body)
+	return request(self, "/v1/browse", body, options.playerId)
 end
 
 return AudioScape
