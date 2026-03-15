@@ -100,7 +100,7 @@ local AudioScape = {}
 AudioScape.__index = AudioScape
 
 type AudioScapeClient = typeof(setmetatable({} :: {
-	_apiKey: string,
+	_apiKey: any,
 	_universeId: string,
 	_placeId: string,
 }, AudioScape))
@@ -125,7 +125,7 @@ end
 local function request(self: AudioScapeClient, path: string, body: { [string]: any }, playerId: number?): (any, string?)
 	local jsonBody = HttpService:JSONEncode(body)
 
-	local headers: { [string]: string } = {
+	local headers: { [string]: any } = {
 		["x-api-key"] = self._apiKey,
 		["Content-Type"] = "application/json",
 		["X-Universe-Id"] = self._universeId,
@@ -158,8 +158,11 @@ local function request(self: AudioScapeClient, path: string, body: { [string]: a
 	return decoded, nil
 end
 
-function AudioScape.new(apiKey: string): AudioScapeClient
-	assert(type(apiKey) == "string" and #apiKey > 0, "AudioScape.new requires a non-empty API key string")
+function AudioScape.new(apiKey: any): AudioScapeClient
+	assert(apiKey ~= nil, "AudioScape.new requires an API key (string or Secret)")
+	if type(apiKey) == "string" then
+		assert(#apiKey > 0, "AudioScape.new requires a non-empty API key string")
+	end
 
 	local self = setmetatable({
 		_apiKey = apiKey,
