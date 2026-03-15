@@ -6,12 +6,12 @@
 	and queues the next one. Great for building auto-playlists.
 ]]
 
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerScriptService = game:GetService("ServerScriptService")
 local SoundService = game:GetService("SoundService")
 local HttpService = game:GetService("HttpService")
 local RunService = game:GetService("RunService")
 
-local AudioScape = require(ReplicatedStorage.Packages.AudioScape)
+local AudioScape = require(ServerScriptService.Packages.AudioScape)
 
 local apiKey = if RunService:IsStudio()
 	then "your-test-key"

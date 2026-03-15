@@ -1,51 +1,53 @@
 --!strict
 --[[
-	SearchBox Example
+	SearchBox Example (Server Script)
 
-	Connects a TextBox to AudioScape search. Type a query, press Enter,
-	and results appear in the output. Replace the print statements with
-	your own UI logic.
+	Listens for search requests from clients via a RemoteEvent,
+	runs the search on the server, and returns results.
+
+	Setup:
+	1. Create a RemoteEvent named "SearchRequest" in ReplicatedStorage
+	2. Place this Script in ServerScriptService
+	3. On the client, fire the RemoteEvent with the query string:
+	     ReplicatedStorage.SearchRequest:FireServer("chill beats")
 ]]
 
+local ServerScriptService = game:GetService("ServerScriptService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local HttpService = game:GetService("HttpService")
 local RunService = game:GetService("RunService")
 
-local AudioScape = require(ReplicatedStorage.Packages.AudioScape)
+local AudioScape = require(ServerScriptService.Packages.AudioScape)
 
--- Use a test key in Studio, Secrets Store in production
 local apiKey = if RunService:IsStudio()
 	then "your-test-key"
 	else HttpService:GetSecret("AudioScapeKey")
 
 local client = AudioScape.new(apiKey)
 
--- Wire up to a TextBox (e.g., in a ScreenGui)
-local textBox = script.Parent :: TextBox
+local searchEvent = ReplicatedStorage:WaitForChild("SearchRequest") :: RemoteEvent
 
-textBox.FocusLost:Connect(function(enterPressed: boolean)
-	if not enterPressed then
-		return
-	end
-
-	local query = textBox.Text
-	if #query == 0 then
+searchEvent.OnServerEvent:Connect(function(player: Player, query: unknown)
+	if type(query) ~= "string" or #(query :: string) == 0 then
 		return
 	end
 
 	local result, err = client:search({
-		query = query,
+		query = query :: string,
 		limit = 10,
+		playerId = player.UserId,
 	})
 
 	if not result then
-		warn("Search failed:", err)
+		warn("Search failed for", player.Name, ":", err)
 		return
 	end
 
-	print("Found", result.meta.total, "tracks for:", query)
+	print(string.format("[%s] searched '%s' — %d results", player.Name, query, result.meta.total))
 
 	for _, track in result.tracks do
 		print(string.format("  %s - %s (ID: %s)", track.artist, track.name, track.asset_id))
 	end
+
+	-- TODO: Send results back to client via RemoteEvent or RemoteFunction
 end)
