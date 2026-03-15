@@ -2,7 +2,7 @@
 name = "this-fifo/audioscape-sdk"
 version = "0.2.0"
 registry = "https://github.com/UpliftGames/wally-index"
-realm = "shared"
+realm = "server"
 license = "MIT"
 description = "Luau SDK for the AudioScape Developer API — search, browse, and discover music for Roblox experiences."
 authors = ["AudioScape Inc."]
