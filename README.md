@@ -1,6 +1,6 @@
 # AudioScape SDK for Roblox
 
-A Luau SDK for the [AudioScape Developer API](https://developer.audioscape.ai) — search, browse, and discover music for your Roblox experiences.
+A Luau SDK for the [AudioScape Developer API](https://developer.audioscape.ai) — search, browse, discover music, and track analytics for your Roblox experiences.
 
 > **Note:** This SDK uses `HttpService:RequestAsync()` and must run on the **server** (Script, not LocalScript). You must enable **Allow HTTP Requests** in your experience's Game Settings → Security.
 
@@ -12,7 +12,7 @@ Add to your `wally.toml`:
 
 ```toml
 [dependencies]
-AudioScape = "this-fifo/audioscape-sdk@0.2.2"
+AudioScape = "this-fifo/audioscape-sdk@0.3.0"
 ```
 
 Then run:
@@ -129,6 +129,78 @@ local result, err = client:browse({ type = "genre", name = "electronic", limit =
 ```
 
 **Browse types:** `artist`, `album`, `genre`, `mood`
+
+### `client:configureAnalytics(config)`
+
+Configure analytics batching behavior. Call before tracking events.
+
+```lua
+client:configureAnalytics({
+    enabled = true,       -- default: true
+    batchInterval = 30,   -- seconds between flushes (min: 5)
+    maxBatchSize = 50,    -- events per flush (1-500)
+    maxQueueSize = 500,   -- max buffered events (min: 10)
+})
+```
+
+### `client:trackPlay(assetId, playerId?, duration?)`
+
+Track a song play event.
+
+```lua
+client:trackPlay("rbxassetid://123456789", player.UserId, 120)
+```
+
+### `client:trackStop(assetId, playerId?, duration?)`
+
+Track a song stop event (natural end or user action).
+
+### `client:trackSkip(assetId, playerId?, duration?)`
+
+Track a song skip event. Duration is how long the player listened before skipping.
+
+### `client:trackVote(assetId, value, playerId?)`
+
+Track a vote. Value must be `"up"` or `"down"`.
+
+```lua
+client:trackVote("rbxassetid://123456789", "up", player.UserId)
+```
+
+### `client:trackFavorite(assetId, playerId?)`
+
+Track a favorite event.
+
+### `client:trackUnfavorite(assetId, playerId?)`
+
+Track an unfavorite event.
+
+### `client:trackAddToQueue(assetId, playerId?)`
+
+Track when a player adds a song to a queue, setlist, or playlist.
+
+### `client:trackSearchClick(assetId, playerId?, metadata?)`
+
+Track when a player clicks a search result.
+
+### `client:trackCustom(eventType, assetId?, playerId?, metadata?)`
+
+Track a custom event with any type name.
+
+```lua
+client:trackCustom("song_previewed", assetId, player.UserId, {
+    source = "browse_genre",
+    position = 3,
+})
+```
+
+### `client:flushAnalytics()`
+
+Force flush all buffered events immediately. Called automatically on game close.
+
+## Analytics
+
+Analytics are collected automatically — events are buffered in memory and flushed every 30 seconds (configurable). On game close, remaining events are flushed via `game:BindToClose`. No player PII is stored; `playerId` is used only for unique player counts.
 
 ## Rate Limits
 
