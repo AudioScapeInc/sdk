@@ -1,8 +1,10 @@
 --!strict
 
 local HttpService = game:GetService("HttpService")
+local RunService = game:GetService("RunService")
 
 local BASE_URL = "https://api.audioscape.ai/developer"
+local ANALYTICS_URL = "https://api.audioscape.ai/analytics"
 
 local VALID_BROWSE_TYPES = {
 	artist = true,
@@ -10,6 +12,11 @@ local VALID_BROWSE_TYPES = {
 	genre = true,
 	mood = true,
 }
+
+-- Default analytics settings
+local DEFAULT_BATCH_INTERVAL = 30 -- seconds
+local DEFAULT_MAX_BATCH_SIZE = 50 -- events per flush
+local DEFAULT_MAX_QUEUE_SIZE = 500 -- max buffered events before oldest are dropped
 
 export type SearchOptions = {
 	query: string,
@@ -96,6 +103,23 @@ export type BrowseTracksResult = {
 	},
 }
 
+export type AnalyticsConfig = {
+	enabled: boolean?,
+	batchInterval: number?,
+	maxBatchSize: number?,
+	maxQueueSize: number?,
+}
+
+type AnalyticsEvent = {
+	type: string,
+	asset_id: string?,
+	timestamp: number?,
+	player_id: string?,
+	duration: number?,
+	value: string?,
+	metadata: { [string]: any }?,
+}
+
 local AudioScape = {}
 AudioScape.__index = AudioScape
 
@@ -103,6 +127,12 @@ type AudioScapeClient = typeof(setmetatable({} :: {
 	_apiKey: any,
 	_universeId: string,
 	_placeId: string,
+	_analyticsEnabled: boolean,
+	_analyticsBatchInterval: number,
+	_analyticsMaxBatchSize: number,
+	_analyticsMaxQueueSize: number,
+	_analyticsBuffer: { AnalyticsEvent },
+	_analyticsRunning: boolean,
 }, AudioScape))
 
 local function formatError(statusCode: number, body: string): string
@@ -158,6 +188,99 @@ local function request(self: AudioScapeClient, path: string, body: { [string]: a
 	return decoded, nil
 end
 
+--[[ ──────────────────────────────────────────
+     Analytics — internal helpers
+     ────────────────────────────────────────── ]]
+
+local function flushAnalyticsBuffer(self: AudioScapeClient)
+	if #self._analyticsBuffer == 0 then
+		return
+	end
+
+	-- Drain up to maxBatchSize events from the buffer
+	local batch: { AnalyticsEvent } = {}
+	local count = math.min(#self._analyticsBuffer, self._analyticsMaxBatchSize)
+	for _ = 1, count do
+		table.insert(batch, table.remove(self._analyticsBuffer, 1))
+	end
+
+	local jsonBody = HttpService:JSONEncode({ events = batch })
+
+	local headers: { [string]: any } = {
+		["x-api-key"] = self._apiKey,
+		["Content-Type"] = "application/json",
+		["X-Universe-Id"] = self._universeId,
+		["X-Place-Id"] = self._placeId,
+	}
+
+	local ok, result = pcall(HttpService.RequestAsync, HttpService, {
+		Url = ANALYTICS_URL .. "/v1/analytics",
+		Method = "POST",
+		Headers = headers,
+		Body = jsonBody,
+	})
+
+	if not ok then
+		warn("[AudioScape] Analytics flush failed: " .. tostring(result))
+		-- Re-queue events at the front of the buffer (best effort, may exceed max)
+		for i = #batch, 1, -1 do
+			table.insert(self._analyticsBuffer, 1, batch[i])
+		end
+	elseif not result.Success then
+		warn("[AudioScape] Analytics flush HTTP " .. tostring(result.StatusCode))
+	end
+end
+
+local function startAnalyticsLoop(self: AudioScapeClient)
+	if self._analyticsRunning then
+		return
+	end
+	self._analyticsRunning = true
+
+	-- Flush on game close
+	game:BindToClose(function()
+		-- Flush all remaining events in batches
+		while #self._analyticsBuffer > 0 do
+			flushAnalyticsBuffer(self)
+		end
+	end)
+
+	-- Periodic flush loop
+	task.spawn(function()
+		while self._analyticsRunning do
+			task.wait(self._analyticsBatchInterval)
+			if self._analyticsEnabled and #self._analyticsBuffer > 0 then
+				local ok, err = pcall(flushAnalyticsBuffer, self)
+				if not ok then
+					warn("[AudioScape] Analytics loop error: " .. tostring(err))
+				end
+			end
+		end
+	end)
+end
+
+local function enqueueEvent(self: AudioScapeClient, event: AnalyticsEvent)
+	if not self._analyticsEnabled then
+		return
+	end
+
+	-- Set timestamp if not provided
+	if not event.timestamp then
+		event.timestamp = workspace:GetServerTimeNow()
+	end
+
+	-- Enforce queue size limit (drop oldest events)
+	while #self._analyticsBuffer >= self._analyticsMaxQueueSize do
+		table.remove(self._analyticsBuffer, 1)
+	end
+
+	table.insert(self._analyticsBuffer, event)
+end
+
+--[[ ──────────────────────────────────────────
+     Public API
+     ────────────────────────────────────────── ]]
+
 function AudioScape.new(apiKey: any): AudioScapeClient
 	assert(apiKey ~= nil, "AudioScape.new requires an API key (string or Secret)")
 	if type(apiKey) == "string" then
@@ -168,10 +291,145 @@ function AudioScape.new(apiKey: any): AudioScapeClient
 		_apiKey = apiKey,
 		_universeId = tostring(game.GameId),
 		_placeId = tostring(game.PlaceId),
+		-- Analytics state
+		_analyticsEnabled = true,
+		_analyticsBatchInterval = DEFAULT_BATCH_INTERVAL,
+		_analyticsMaxBatchSize = DEFAULT_MAX_BATCH_SIZE,
+		_analyticsMaxQueueSize = DEFAULT_MAX_QUEUE_SIZE,
+		_analyticsBuffer = {},
+		_analyticsRunning = false,
 	}, AudioScape)
+
+	-- Start analytics loop on server only
+	if RunService:IsServer() and RunService:IsRunning() then
+		startAnalyticsLoop(self)
+	end
 
 	return self
 end
+
+-- Configure analytics settings (call before tracking events)
+function AudioScape.configureAnalytics(self: AudioScapeClient, config: AnalyticsConfig)
+	if config.enabled ~= nil then
+		self._analyticsEnabled = config.enabled
+	end
+	if config.batchInterval ~= nil then
+		assert(config.batchInterval >= 5, "batchInterval must be at least 5 seconds")
+		self._analyticsBatchInterval = config.batchInterval
+	end
+	if config.maxBatchSize ~= nil then
+		assert(config.maxBatchSize >= 1 and config.maxBatchSize <= 500, "maxBatchSize must be 1-500")
+		self._analyticsMaxBatchSize = config.maxBatchSize
+	end
+	if config.maxQueueSize ~= nil then
+		assert(config.maxQueueSize >= 10, "maxQueueSize must be at least 10")
+		self._analyticsMaxQueueSize = config.maxQueueSize
+	end
+end
+
+-- Force flush all buffered analytics events immediately
+function AudioScape.flushAnalytics(self: AudioScapeClient)
+	while #self._analyticsBuffer > 0 do
+		flushAnalyticsBuffer(self)
+	end
+end
+
+--[[ ──────────────────────────────────────────
+     Analytics — track events
+     ────────────────────────────────────────── ]]
+
+-- Track a song play event
+function AudioScape.trackPlay(self: AudioScapeClient, assetId: string, playerId: (number | string)?, duration: number?)
+	enqueueEvent(self, {
+		type = "play",
+		asset_id = assetId,
+		player_id = if playerId then tostring(playerId) else nil,
+		duration = duration,
+	})
+end
+
+-- Track a song stop event (natural end or user action)
+function AudioScape.trackStop(self: AudioScapeClient, assetId: string, playerId: (number | string)?, duration: number?)
+	enqueueEvent(self, {
+		type = "stop",
+		asset_id = assetId,
+		player_id = if playerId then tostring(playerId) else nil,
+		duration = duration,
+	})
+end
+
+-- Track a song skip event
+function AudioScape.trackSkip(self: AudioScapeClient, assetId: string, playerId: (number | string)?, duration: number?)
+	enqueueEvent(self, {
+		type = "skip",
+		asset_id = assetId,
+		player_id = if playerId then tostring(playerId) else nil,
+		duration = duration,
+	})
+end
+
+-- Track a vote event (value must be "up" or "down")
+function AudioScape.trackVote(self: AudioScapeClient, assetId: string, value: string, playerId: (number | string)?)
+	assert(value == "up" or value == "down", "vote value must be 'up' or 'down'")
+	enqueueEvent(self, {
+		type = "vote",
+		asset_id = assetId,
+		value = value,
+		player_id = if playerId then tostring(playerId) else nil,
+	})
+end
+
+-- Track a favorite event
+function AudioScape.trackFavorite(self: AudioScapeClient, assetId: string, playerId: (number | string)?)
+	enqueueEvent(self, {
+		type = "favorite",
+		asset_id = assetId,
+		player_id = if playerId then tostring(playerId) else nil,
+	})
+end
+
+-- Track an unfavorite event
+function AudioScape.trackUnfavorite(self: AudioScapeClient, assetId: string, playerId: (number | string)?)
+	enqueueEvent(self, {
+		type = "unfavorite",
+		asset_id = assetId,
+		player_id = if playerId then tostring(playerId) else nil,
+	})
+end
+
+-- Track an add-to-queue event (setlist, playlist, etc.)
+function AudioScape.trackAddToQueue(self: AudioScapeClient, assetId: string, playerId: (number | string)?)
+	enqueueEvent(self, {
+		type = "add_to_queue",
+		asset_id = assetId,
+		player_id = if playerId then tostring(playerId) else nil,
+	})
+end
+
+-- Track a search result click
+function AudioScape.trackSearchClick(self: AudioScapeClient, assetId: string, playerId: (number | string)?, metadata: { [string]: any }?)
+	enqueueEvent(self, {
+		type = "search_click",
+		asset_id = assetId,
+		player_id = if playerId then tostring(playerId) else nil,
+		metadata = metadata,
+	})
+end
+
+-- Track a custom event (any string type, flexible schema)
+function AudioScape.trackCustom(self: AudioScapeClient, eventType: string, assetId: string?, playerId: (number | string)?, metadata: { [string]: any }?)
+	assert(type(eventType) == "string" and #eventType > 0, "custom event type must be a non-empty string")
+	enqueueEvent(self, {
+		type = eventType,
+		asset_id = assetId,
+		player_id = if playerId then tostring(playerId) else nil,
+		metadata = metadata,
+	})
+end
+
+--[[ ──────────────────────────────────────────
+     Search / Similar / Browse
+     ────────────────────────────────────────── ]]
 
 function AudioScape.search(self: AudioScapeClient, options: SearchOptions): (SearchResult?, string?)
 	if type(options.query) ~= "string" or #options.query == 0 then
