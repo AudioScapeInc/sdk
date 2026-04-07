@@ -12,7 +12,7 @@ Add to your `wally.toml`:
 
 ```toml
 [dependencies]
-AudioScape = "this-fifo/audioscape-sdk@0.3.0"
+AudioScape = "this-fifo/audioscape-sdk@0.4.0"
 ```
 
 Then run:
@@ -130,6 +130,36 @@ local result, err = client:browse({ type = "genre", name = "electronic", limit =
 
 **Browse types:** `artist`, `album`, `genre`, `mood`
 
+### `client:getPlaylist(options)`
+
+Fetch a configured playlist and its tracks. Playlists are created in the [Developer Portal](https://developer.audioscape.ai/configure).
+
+```lua
+local result, err = client:getPlaylist({
+    playlist_id = "station-electronic-1712...",  -- required
+    playerId = player.UserId,                    -- optional
+})
+-- result = { playlist, tracks, meta }
+-- result.playlist = { id, name, genre, playback_mode, track_count }
+-- result.tracks = { { asset_id, name, artist, album, genre, duration, bpm, position, ... } }
+```
+
+### `client:listPlaylists(playerId?)`
+
+List all playlists configured for your API key.
+
+```lua
+local result, err = client:listPlaylists(player.UserId)
+-- result = { playlists, meta }
+-- result.playlists = { { id, name, genre, playback_mode, track_count } }
+
+if result then
+    for _, playlist in result.playlists do
+        print(playlist.name, "-", playlist.genre, "-", playlist.track_count, "tracks")
+    end
+end
+```
+
 ### `client:configureAnalytics(config)`
 
 Configure analytics batching behavior. Call before tracking events.
@@ -225,6 +255,7 @@ See the [`examples/`](examples/) folder for complete usage examples:
 - **SearchBox.luau** — Wire search to a TextBox input
 - **BrowseGenres.luau** — List genres and play a random track
 - **SimilarTrack.luau** — Auto-playlist using similar tracks
+- **PlaylistStation.luau** — Fetch and play a configured station playlist
 
 ## Links
 

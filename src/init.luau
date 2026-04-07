@@ -103,6 +103,43 @@ export type BrowseTracksResult = {
 	},
 }
 
+export type PlaylistOptions = {
+	playlist_id: string,
+	playerId: number?,
+}
+
+export type PlaylistInfo = {
+	id: string,
+	name: string,
+	genre: string,
+	playback_mode: string,
+	track_count: number,
+}
+
+export type PlaylistTrack = {
+	asset_id: string,
+	name: string,
+	artist: string,
+	album: string,
+	genre: string,
+	duration: number,
+	bpm: number?,
+	position: number,
+	created_at: string,
+	updated_at: string,
+}
+
+export type PlaylistResult = {
+	playlist: PlaylistInfo,
+	tracks: { PlaylistTrack },
+	meta: { total: number },
+}
+
+export type ListPlaylistsResult = {
+	playlists: { PlaylistInfo },
+	meta: { total: number },
+}
+
 export type AnalyticsConfig = {
 	enabled: boolean?,
 	batchInterval: number?,
@@ -473,6 +510,26 @@ function AudioScape.browse(self: AudioScapeClient, options: BrowseOptions): (Bro
 	}
 
 	return request(self, "/v1/browse", body, options.playerId)
+end
+
+function AudioScape.getPlaylist(self: AudioScapeClient, options: PlaylistOptions): (PlaylistResult?, string?)
+	if type(options.playlist_id) ~= "string" or #options.playlist_id == 0 then
+		return nil, "getPlaylist requires a non-empty playlist_id string"
+	end
+
+	local body: { [string]: any } = {
+		playlist_id = options.playlist_id,
+	}
+
+	return request(self, "/v1/playlist", body, options.playerId)
+end
+
+function AudioScape.listPlaylists(self: AudioScapeClient, playerId: number?): (ListPlaylistsResult?, string?)
+	local body: { [string]: any } = {
+		action = "list",
+	}
+
+	return request(self, "/v1/playlist", body, playerId)
 end
 
 return AudioScape
