@@ -1,6 +1,6 @@
 --!strict
 --[[
-	MusicPlayer Basic Example
+	AudioScapeMusicPlayer Basic Example
 
 	Searches for music, queues the results, and plays them
 	with automatic analytics tracking. No manual trackPlay/trackStop needed.

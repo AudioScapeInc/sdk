@@ -1,9 +1,9 @@
 --!strict
 --[[
-	MusicPlayer Playlist Example
+	AudioScapeMusicPlayer Playlist Example
 
 	Fetches a configured playlist from the portal and plays it
-	using the MusicPlayer. Skip/stop analytics are tracked automatically.
+	using the AudioScapeMusicPlayer. Skip/stop analytics are tracked automatically.
 ]]
 
 local ServerStorage = game:GetService("ServerStorage")

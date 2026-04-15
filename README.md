@@ -60,7 +60,7 @@ if result then
 end
 ```
 
-The `MusicPlayer` handles Sound lifecycle, queue advancement, and analytics tracking automatically — no manual `trackPlay`/`trackStop` calls needed.
+The `AudioScapeMusicPlayer` handles Sound lifecycle, queue advancement, and analytics tracking automatically — no manual `trackPlay`/`trackStop` calls needed.
 
 ## Telemetry
 
@@ -163,11 +163,11 @@ end
 
 ## Music Player
 
-The `MusicPlayer` manages audio playback — queue tracks, play, skip — and automatically fires `trackPlay`, `trackStop`, and `trackSkip` analytics events with accurate listen durations.
+The `AudioScapeMusicPlayer` manages audio playback — queue tracks, play, skip — and automatically fires `trackPlay`, `trackStop`, and `trackSkip` analytics events with accurate listen durations.
 
 ### `client:createPlayer(options?)`
 
-Create a MusicPlayer instance.
+Create an AudioScapeMusicPlayer instance.
 
 ```lua
 local player = client:createPlayer({
@@ -347,7 +347,7 @@ end
 See the [`examples/`](examples/) folder for complete usage examples:
 
 - **MusicPlayerBasic.luau** — Search, queue, and play with auto-analytics
-- **MusicPlayerPlaylist.luau** — Play a configured playlist with the MusicPlayer
+- **MusicPlayerPlaylist.luau** — Play a configured playlist with the AudioScapeMusicPlayer
 - **SearchBox.luau** — Wire search to a TextBox input via RemoteEvent
 - **BrowseGenres.luau** — List genres and play a random track
 - **SimilarTrack.luau** — Auto-playlist using similar tracks

@@ -1,6 +1,6 @@
 --!strict
 --[[
-	MusicPlayer — drop-in audio playback with auto-analytics.
+	AudioScapeMusicPlayer — drop-in audio playback with auto-analytics.
 
 	Manages a queue of tracks, handles Sound lifecycle, and automatically
 	fires play/stop/skip analytics events through the AudioScape client.
@@ -34,11 +34,18 @@ export type PlayerOptions = {
 	playerId: number?,
 }
 
-local MusicPlayer = {}
-MusicPlayer.__index = MusicPlayer
+-- Minimal interface for the analytics client dependency.
+type AnalyticsClient = {
+	trackPlay: (self: any, assetId: string, playerId: (number | string)?, duration: number?) -> (),
+	trackStop: (self: any, assetId: string, playerId: (number | string)?, duration: number?) -> (),
+	trackSkip: (self: any, assetId: string, playerId: (number | string)?, duration: number?) -> (),
+}
 
-type MusicPlayerInstance = typeof(setmetatable({} :: {
-	_client: any,
+local AudioScapeMusicPlayer = {}
+AudioScapeMusicPlayer.__index = AudioScapeMusicPlayer
+
+export type MusicPlayerInstance = typeof(setmetatable({} :: {
+	_client: AnalyticsClient,
 	_parent: Instance,
 	_volume: number,
 	_playerId: number?,
@@ -46,6 +53,7 @@ type MusicPlayerInstance = typeof(setmetatable({} :: {
 	_index: number,
 	_sound: Sound?,
 	_playing: boolean,
+	_advancing: boolean,
 	_startedAt: number,
 	_endedConnection: RBXScriptConnection?,
 
@@ -55,20 +63,21 @@ type MusicPlayerInstance = typeof(setmetatable({} :: {
 
 	OnTrackChanged: ((track: Track?) -> ())?,
 	OnQueueFinished: (() -> ())?,
-}, MusicPlayer))
+}, AudioScapeMusicPlayer))
 
-function MusicPlayer.new(client: any, options: PlayerOptions?): MusicPlayerInstance
+function AudioScapeMusicPlayer.new(client: AnalyticsClient, options: PlayerOptions?): MusicPlayerInstance
 	local opts = options or {}
 
 	local self = setmetatable({
 		_client = client,
 		_parent = opts.parent or SoundService,
-		_volume = opts.volume or 0.5,
+		_volume = math.clamp(opts.volume or 0.5, 0, 1),
 		_playerId = opts.playerId,
 		_queue = {},
 		_index = 0,
 		_sound = nil,
 		_playing = false,
+		_advancing = false,
 		_startedAt = 0,
 		_endedConnection = nil,
 
@@ -80,13 +89,27 @@ function MusicPlayer.new(client: any, options: PlayerOptions?): MusicPlayerInsta
 		-- Callbacks
 		OnTrackChanged = nil,
 		OnQueueFinished = nil,
-	}, MusicPlayer)
+	}, AudioScapeMusicPlayer)
+
+	-- Flush final analytics on game shutdown
+	game:BindToClose(function()
+		self:destroy()
+	end)
 
 	return self
 end
 
+-- Clean up the player, firing a final stop event for any in-progress track.
+function AudioScapeMusicPlayer.destroy(self: MusicPlayerInstance)
+	if self._playing and self.NowPlaying then
+		local duration = self:_getListenDuration()
+		self._client:trackStop(self.NowPlaying.asset_id, self._playerId, duration)
+	end
+	self:_cleanupSound()
+end
+
 -- Add tracks to the end of the queue.
-function MusicPlayer.queue(self: MusicPlayerInstance, tracks: { Track })
+function AudioScapeMusicPlayer.queue(self: MusicPlayerInstance, tracks: { Track })
 	for _, track in tracks do
 		table.insert(self._queue, track)
 	end
@@ -94,7 +117,7 @@ function MusicPlayer.queue(self: MusicPlayerInstance, tracks: { Track })
 end
 
 -- Replace the queue with new tracks. Stops current playback.
-function MusicPlayer.setQueue(self: MusicPlayerInstance, tracks: { Track })
+function AudioScapeMusicPlayer.setQueue(self: MusicPlayerInstance, tracks: { Track })
 	self:stop()
 	self._queue = {}
 	for _, track in tracks do
@@ -105,19 +128,22 @@ function MusicPlayer.setQueue(self: MusicPlayerInstance, tracks: { Track })
 end
 
 -- Clear the queue and stop playback.
-function MusicPlayer.clearQueue(self: MusicPlayerInstance)
+function AudioScapeMusicPlayer.clearQueue(self: MusicPlayerInstance)
 	self:stop()
 	self._queue = {}
 	self._index = 0
 	self.Queue = self._queue
-	self.NowPlaying = nil
-	if self.OnTrackChanged then
-		self.OnTrackChanged(nil)
+	-- stop() handles NowPlaying cleanup when playing; handle the idle case
+	if self.NowPlaying then
+		self.NowPlaying = nil
+		if self.OnTrackChanged then
+			self.OnTrackChanged(nil)
+		end
 	end
 end
 
 -- Start or resume playback. Plays the next track in the queue.
-function MusicPlayer.play(self: MusicPlayerInstance)
+function AudioScapeMusicPlayer.play(self: MusicPlayerInstance)
 	if self._playing then
 		return
 	end
@@ -135,7 +161,7 @@ function MusicPlayer.play(self: MusicPlayerInstance)
 end
 
 -- Stop the currently playing track. Fires a stop analytics event.
-function MusicPlayer.stop(self: MusicPlayerInstance)
+function AudioScapeMusicPlayer.stop(self: MusicPlayerInstance)
 	if not self._playing or not self._sound then
 		return
 	end
@@ -151,7 +177,13 @@ function MusicPlayer.stop(self: MusicPlayerInstance)
 end
 
 -- Skip to the next track. Fires a skip analytics event with listen duration.
-function MusicPlayer.skip(self: MusicPlayerInstance)
+function AudioScapeMusicPlayer.skip(self: MusicPlayerInstance)
+	if not self._playing then
+		return
+	end
+
+	self._advancing = true
+
 	local duration = self:_getListenDuration()
 	local track = self.NowPlaying
 
@@ -164,12 +196,14 @@ function MusicPlayer.skip(self: MusicPlayerInstance)
 	-- Advance to next track
 	if self._index < #self._queue then
 		self._index += 1
+		self._advancing = false
 		self:_playTrackAtIndex(self._index)
 	else
 		-- End of queue
 		self._playing = false
 		self.IsPlaying = false
 		self.NowPlaying = nil
+		self._advancing = false
 		if self.OnTrackChanged then
 			self.OnTrackChanged(nil)
 		end
@@ -180,7 +214,7 @@ function MusicPlayer.skip(self: MusicPlayerInstance)
 end
 
 -- Set playback volume (0 to 1).
-function MusicPlayer.setVolume(self: MusicPlayerInstance, volume: number)
+function AudioScapeMusicPlayer.setVolume(self: MusicPlayerInstance, volume: number)
 	self._volume = math.clamp(volume, 0, 1)
 	if self._sound then
 		self._sound.Volume = self._volume
@@ -188,13 +222,13 @@ function MusicPlayer.setVolume(self: MusicPlayerInstance, volume: number)
 end
 
 -- Set the player ID for analytics tracking.
-function MusicPlayer.setPlayerId(self: MusicPlayerInstance, playerId: number?)
+function AudioScapeMusicPlayer.setPlayerId(self: MusicPlayerInstance, playerId: number?)
 	self._playerId = playerId
 end
 
 -- Play a single track immediately, replacing current playback.
 -- Does not affect the queue.
-function MusicPlayer.playTrack(self: MusicPlayerInstance, track: Track)
+function AudioScapeMusicPlayer.playTrack(self: MusicPlayerInstance, track: Track)
 	self:_cleanupSound()
 	self._queue = { track }
 	self._index = 1
@@ -206,7 +240,7 @@ end
      Internal helpers
      ────────────────────────────────────────── ]]
 
-function MusicPlayer._playTrackAtIndex(self: MusicPlayerInstance, index: number)
+function AudioScapeMusicPlayer._playTrackAtIndex(self: MusicPlayerInstance, index: number)
 	local track = self._queue[index]
 	if not track then
 		return
@@ -238,6 +272,12 @@ function MusicPlayer._playTrackAtIndex(self: MusicPlayerInstance, index: number)
 
 	-- Listen for track end
 	self._endedConnection = sound.Ended:Connect(function()
+		-- Guard against re-entrant advancement (e.g. skip() already handling this)
+		if self._advancing then
+			return
+		end
+		self._advancing = true
+
 		local listenDuration = self:_getListenDuration()
 
 		self:_cleanupSound()
@@ -248,12 +288,14 @@ function MusicPlayer._playTrackAtIndex(self: MusicPlayerInstance, index: number)
 		-- Advance to next track
 		if self._index < #self._queue then
 			self._index += 1
+			self._advancing = false
 			self:_playTrackAtIndex(self._index)
 		else
 			-- Queue finished
 			self._playing = false
 			self.IsPlaying = false
 			self.NowPlaying = nil
+			self._advancing = false
 			if self.OnTrackChanged then
 				self.OnTrackChanged(nil)
 			end
@@ -266,7 +308,7 @@ function MusicPlayer._playTrackAtIndex(self: MusicPlayerInstance, index: number)
 	sound:Play()
 end
 
-function MusicPlayer._cleanupSound(self: MusicPlayerInstance)
+function AudioScapeMusicPlayer._cleanupSound(self: MusicPlayerInstance)
 	if self._endedConnection then
 		self._endedConnection:Disconnect()
 		self._endedConnection = nil
@@ -280,11 +322,11 @@ function MusicPlayer._cleanupSound(self: MusicPlayerInstance)
 	self.IsPlaying = false
 end
 
-function MusicPlayer._getListenDuration(self: MusicPlayerInstance): number
+function AudioScapeMusicPlayer._getListenDuration(self: MusicPlayerInstance): number
 	if self._startedAt == 0 then
 		return 0
 	end
 	return workspace:GetServerTimeNow() - self._startedAt
 end
 
-return MusicPlayer
+return AudioScapeMusicPlayer
