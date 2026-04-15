@@ -12,7 +12,7 @@ Add to your `wally.toml`:
 
 ```toml
 [dependencies]
-AudioScape = "this-fifo/audioscape-sdk@0.4.0"
+AudioScape = "this-fifo/audioscape-sdk@0.5.1"
 ```
 
 Then run:
