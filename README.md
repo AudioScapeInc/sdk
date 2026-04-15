@@ -29,7 +29,7 @@ Download `AudioScape.rbxm` from the [latest release](https://github.com/AudioSca
 
 ### Manual
 
-Copy `src/init.luau` into your project under `ServerStorage` or `ServerScriptService`. If using Rojo, add it to your server-side project tree.
+Copy the `src/` folder into your project under `ServerStorage` or `ServerScriptService`. If using Rojo, add it to your server-side project tree.
 
 ## Prerequisites
 
@@ -45,21 +45,22 @@ local RunService = game:GetService("RunService")
 
 local AudioScape = require(ServerStorage.AudioScape)
 
--- Use a test key in Studio, Secrets Store in production
 local apiKey = if RunService:IsStudio()
     then "your-test-key"
     else HttpService:GetSecret("AudioScapeKey")
 
 local client = AudioScape.new(apiKey)
+local player = client:createPlayer()
 
--- Search for music
+-- Search and play
 local result, err = client:search({ query = "chill lo-fi beats", limit = 10 })
 if result then
-    for _, track in result.tracks do
-        print(track.artist, "-", track.name)
-    end
+    player:queue(result.tracks)
+    player:play()
 end
 ```
+
+The `MusicPlayer` handles Sound lifecycle, queue advancement, and analytics tracking automatically — no manual `trackPlay`/`trackStop` calls needed.
 
 ## Telemetry
 
@@ -160,6 +161,103 @@ if result then
 end
 ```
 
+## Music Player
+
+The `MusicPlayer` manages audio playback — queue tracks, play, skip — and automatically fires `trackPlay`, `trackStop`, and `trackSkip` analytics events with accurate listen durations.
+
+### `client:createPlayer(options?)`
+
+Create a MusicPlayer instance.
+
+```lua
+local player = client:createPlayer({
+    volume = 0.5,               -- optional (default: 0.5)
+    parent = SoundService,      -- optional (default: SoundService)
+    playerId = player.UserId,   -- optional, for per-player analytics
+})
+```
+
+### `player:queue(tracks)`
+
+Add tracks to the end of the play queue.
+
+```lua
+local result = client:search({ query = "upbeat summer" })
+player:queue(result.tracks)
+```
+
+### `player:setQueue(tracks)`
+
+Replace the queue with new tracks and stop current playback.
+
+### `player:clearQueue()`
+
+Clear the queue and stop playback.
+
+### `player:play()`
+
+Start playing from the current position in the queue.
+
+### `player:stop()`
+
+Stop the currently playing track. Fires a `stop` analytics event with listen duration.
+
+### `player:skip()`
+
+Skip to the next track. Fires a `skip` analytics event with how long the player listened.
+
+```lua
+-- Skip fires analytics automatically
+player:skip()
+```
+
+### `player:playTrack(track)`
+
+Play a single track immediately, replacing current playback.
+
+```lua
+local result = client:search({ query = "epic boss battle", limit = 1 })
+player:playTrack(result.tracks[1])
+```
+
+### `player:setVolume(volume)`
+
+Set playback volume (0 to 1).
+
+### `player:setPlayerId(playerId)`
+
+Set or change the player ID used for analytics.
+
+### Callbacks
+
+```lua
+player.OnTrackChanged = function(track)
+    if track then
+        print("Now playing:", track.artist, "—", track.name)
+    end
+end
+
+player.OnQueueFinished = function()
+    print("Queue finished!")
+end
+```
+
+### State
+
+| Property | Type | Description |
+|---|---|---|
+| `player.NowPlaying` | `Track?` | Currently playing track, or nil |
+| `player.IsPlaying` | `boolean` | Whether audio is currently playing |
+| `player.Queue` | `{ Track }` | Current track queue |
+
+---
+
+## Analytics
+
+Analytics are collected automatically — events are buffered in memory and flushed every 30 seconds (configurable). On game close, remaining events are flushed via `game:BindToClose`. No player PII is stored; `playerId` is used only for unique player counts.
+
+> **Tip:** If you use `client:createPlayer()`, play/stop/skip events are tracked automatically. The manual tracking methods below are for custom integrations or events the player can't detect (votes, favorites, etc.).
+
 ### `client:configureAnalytics(config)`
 
 Configure analytics batching behavior. Call before tracking events.
@@ -228,10 +326,6 @@ client:trackCustom("song_previewed", assetId, player.UserId, {
 
 Force flush all buffered events immediately. Called automatically on game close.
 
-## Analytics
-
-Analytics are collected automatically — events are buffered in memory and flushed every 30 seconds (configurable). On game close, remaining events are flushed via `game:BindToClose`. No player PII is stored; `playerId` is used only for unique player counts.
-
 ## Rate Limits
 
 Roblox enforces a limit of **500 HTTP requests per minute** per game server. Keep this in mind when designing your integration — consider caching results and debouncing player-triggered searches.
@@ -252,7 +346,9 @@ end
 
 See the [`examples/`](examples/) folder for complete usage examples:
 
-- **SearchBox.luau** — Wire search to a TextBox input
+- **MusicPlayerBasic.luau** — Search, queue, and play with auto-analytics
+- **MusicPlayerPlaylist.luau** — Play a configured playlist with the MusicPlayer
+- **SearchBox.luau** — Wire search to a TextBox input via RemoteEvent
 - **BrowseGenres.luau** — List genres and play a random track
 - **SimilarTrack.luau** — Auto-playlist using similar tracks
 - **PlaylistStation.luau** — Fetch and play a configured station playlist

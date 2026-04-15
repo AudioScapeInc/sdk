@@ -3,6 +3,8 @@
 local HttpService = game:GetService("HttpService")
 local RunService = game:GetService("RunService")
 
+local MusicPlayer = require(script.MusicPlayer)
+
 local BASE_URL = "https://api.audioscape.ai/developer"
 local ANALYTICS_URL = "https://api.audioscape.ai/analytics"
 
@@ -530,6 +532,17 @@ function AudioScape.listPlaylists(self: AudioScapeClient, playerId: number?): (L
 	}
 
 	return request(self, "/v1/playlist", body, playerId)
+end
+
+--[[ ──────────────────────────────────────────
+     Music Player
+     ────────────────────────────────────────── ]]
+
+export type PlayerOptions = MusicPlayer.PlayerOptions
+
+-- Create a MusicPlayer that manages audio playback and auto-tracks analytics.
+function AudioScape.createPlayer(self: AudioScapeClient, options: PlayerOptions?): MusicPlayer.MusicPlayerInstance
+	return MusicPlayer.new(self, options)
 end
 
 return AudioScape
