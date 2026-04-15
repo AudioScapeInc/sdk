@@ -172,6 +172,8 @@ type AudioScapeClient = typeof(setmetatable({} :: {
 	_analyticsMaxQueueSize: number,
 	_analyticsBuffer: { AnalyticsEvent },
 	_analyticsRunning: boolean,
+	_analyticsBackoff: number,
+	_analyticsConsecutiveFailures: number,
 }, AudioScape))
 
 local function formatError(statusCode: number, body: string): string
@@ -231,9 +233,19 @@ end
      Analytics — internal helpers
      ────────────────────────────────────────── ]]
 
-local function flushAnalyticsBuffer(self: AudioScapeClient)
+local function requeueBatch(self: AudioScapeClient, batch: { AnalyticsEvent })
+	for i = #batch, 1, -1 do
+		table.insert(self._analyticsBuffer, 1, batch[i])
+	end
+	-- Trim to maxQueueSize (drop newest un-sent events from the tail)
+	while #self._analyticsBuffer > self._analyticsMaxQueueSize do
+		table.remove(self._analyticsBuffer)
+	end
+end
+
+local function flushAnalyticsBuffer(self: AudioScapeClient): boolean
 	if #self._analyticsBuffer == 0 then
-		return
+		return true
 	end
 
 	-- Drain up to maxBatchSize events from the buffer
@@ -261,13 +273,20 @@ local function flushAnalyticsBuffer(self: AudioScapeClient)
 
 	if not ok then
 		warn("[AudioScape] Analytics flush failed: " .. tostring(result))
-		-- Re-queue events at the front of the buffer (best effort, may exceed max)
-		for i = #batch, 1, -1 do
-			table.insert(self._analyticsBuffer, 1, batch[i])
-		end
-	elseif not result.Success then
-		warn("[AudioScape] Analytics flush HTTP " .. tostring(result.StatusCode))
+		requeueBatch(self, batch)
+		return false
 	end
+
+	if not result.Success then
+		warn("[AudioScape] Analytics flush HTTP " .. tostring(result.StatusCode))
+		-- Re-queue on retryable errors; drop on client errors (bad key, bad request, etc.)
+		if result.StatusCode == 429 or result.StatusCode >= 500 then
+			requeueBatch(self, batch)
+		end
+		return false
+	end
+
+	return true
 end
 
 local function startAnalyticsLoop(self: AudioScapeClient)
@@ -276,22 +295,37 @@ local function startAnalyticsLoop(self: AudioScapeClient)
 	end
 	self._analyticsRunning = true
 
-	-- Flush on game close
+	-- Flush on game close (best-effort, stop after repeated failures)
 	game:BindToClose(function()
-		-- Flush all remaining events in batches
-		while #self._analyticsBuffer > 0 do
-			flushAnalyticsBuffer(self)
+		local failures = 0
+		while #self._analyticsBuffer > 0 and failures < 3 do
+			local ok, result = pcall(flushAnalyticsBuffer, self)
+			if not ok or not result then
+				failures += 1
+			end
 		end
 	end)
 
-	-- Periodic flush loop
+	-- Periodic flush loop with exponential backoff
 	task.spawn(function()
 		while self._analyticsRunning do
-			task.wait(self._analyticsBatchInterval)
+			task.wait(self._analyticsBackoff)
 			if self._analyticsEnabled and #self._analyticsBuffer > 0 then
-				local ok, err = pcall(flushAnalyticsBuffer, self)
+				local ok, result = pcall(flushAnalyticsBuffer, self)
 				if not ok then
-					warn("[AudioScape] Analytics loop error: " .. tostring(err))
+					warn("[AudioScape] Analytics loop error: " .. tostring(result))
+				end
+
+				local flushed = ok and result == true
+				if flushed then
+					self._analyticsBackoff = self._analyticsBatchInterval
+					self._analyticsConsecutiveFailures = 0
+				else
+					self._analyticsConsecutiveFailures += 1
+					self._analyticsBackoff = math.min(
+						self._analyticsBatchInterval * (2 ^ self._analyticsConsecutiveFailures),
+						300
+					)
 				end
 			end
 		end
@@ -337,6 +371,8 @@ function AudioScape.new(apiKey: any): AudioScapeClient
 		_analyticsMaxQueueSize = DEFAULT_MAX_QUEUE_SIZE,
 		_analyticsBuffer = {},
 		_analyticsRunning = false,
+		_analyticsBackoff = DEFAULT_BATCH_INTERVAL,
+		_analyticsConsecutiveFailures = 0,
 	}, AudioScape)
 
 	-- Start analytics loop on server only
@@ -355,6 +391,8 @@ function AudioScape.configureAnalytics(self: AudioScapeClient, config: Analytics
 	if config.batchInterval ~= nil then
 		assert(config.batchInterval >= 5, "batchInterval must be at least 5 seconds")
 		self._analyticsBatchInterval = config.batchInterval
+		self._analyticsBackoff = config.batchInterval
+		self._analyticsConsecutiveFailures = 0
 	end
 	if config.maxBatchSize ~= nil then
 		assert(config.maxBatchSize >= 1 and config.maxBatchSize <= 500, "maxBatchSize must be 1-500")
@@ -366,10 +404,14 @@ function AudioScape.configureAnalytics(self: AudioScapeClient, config: Analytics
 	end
 end
 
--- Force flush all buffered analytics events immediately
+-- Force flush all buffered analytics events immediately (stops after repeated failures)
 function AudioScape.flushAnalytics(self: AudioScapeClient)
-	while #self._analyticsBuffer > 0 do
-		flushAnalyticsBuffer(self)
+	local failures = 0
+	while #self._analyticsBuffer > 0 and failures < 3 do
+		local ok, result = pcall(flushAnalyticsBuffer, self)
+		if not ok or not result then
+			failures += 1
+		end
 	end
 end
 

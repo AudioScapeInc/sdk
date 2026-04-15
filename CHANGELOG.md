@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.5.1
+
+### Fixed
+
+- Analytics events are no longer silently dropped on retryable HTTP errors (429, 5xx) — they are re-queued for the next flush
+- Added exponential backoff to the analytics flush loop (30s → 60s → 120s → … capped at 5 min), resets on success
+- `flushAnalytics()` and `game:BindToClose` flush no longer infinite-loop when the server is unreachable
+- Re-queued events now respect `maxQueueSize` instead of growing unboundedly
+
 ## v0.4.0
 
 ### Added
