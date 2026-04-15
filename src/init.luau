@@ -545,4 +545,112 @@ function AudioScape.createPlayer(self: AudioScapeClient, options: PlayerOptions?
 	return AudioScapeMusicPlayer.new(self, options)
 end
 
+--[[ ──────────────────────────────────────────
+     Client Access
+     ────────────────────────────────────────── ]]
+
+local RATE_LIMIT_INTERVAL = 1 -- minimum seconds between requests per player
+local playerLastRequest: { [number]: number } = {}
+
+local function checkRateLimit(player: Player): boolean
+	local now = workspace:GetServerTimeNow()
+	local last = playerLastRequest[player.UserId]
+	if last and (now - last) < RATE_LIMIT_INTERVAL then
+		return false
+	end
+	playerLastRequest[player.UserId] = now
+	return true
+end
+
+-- Enable client-side access via RemoteFunctions.
+-- Creates AudioScapeRemotes in ReplicatedStorage. Use with AudioScapeClient module in LocalScripts.
+function AudioScape.enableClientAccess(self: AudioScapeClient)
+	local ReplicatedStorage = game:GetService("ReplicatedStorage")
+	local Players = game:GetService("Players")
+
+	local folder = Instance.new("Folder")
+	folder.Name = "AudioScapeRemotes"
+
+	local function createRemote(name: string, handler: (player: Player, ...any) -> ...any)
+		local remote = Instance.new("RemoteFunction")
+		remote.Name = name
+		remote.OnServerInvoke = handler
+		remote.Parent = folder
+	end
+
+	createRemote("Search", function(player: Player, options: any)
+		if not checkRateLimit(player) then
+			return nil, "Rate limited — please wait before making another request"
+		end
+		if type(options) ~= "table" or type(options.query) ~= "string" then
+			return nil, "search requires a table with a query string"
+		end
+		return self:search({
+			query = options.query,
+			limit = options.limit,
+			offset = options.offset,
+			filters = options.filters,
+			playerId = player.UserId,
+		})
+	end)
+
+	createRemote("Similar", function(player: Player, options: any)
+		if not checkRateLimit(player) then
+			return nil, "Rate limited — please wait before making another request"
+		end
+		if type(options) ~= "table" or type(options.asset_id) ~= "string" then
+			return nil, "similar requires a table with an asset_id string"
+		end
+		return self:similar({
+			asset_id = options.asset_id,
+			limit = options.limit,
+			offset = options.offset,
+			playerId = player.UserId,
+		})
+	end)
+
+	createRemote("Browse", function(player: Player, options: any)
+		if not checkRateLimit(player) then
+			return nil, "Rate limited — please wait before making another request"
+		end
+		if type(options) ~= "table" or type(options.type) ~= "string" then
+			return nil, "browse requires a table with a type string"
+		end
+		return self:browse({
+			type = options.type,
+			name = options.name,
+			limit = options.limit,
+			offset = options.offset,
+			playerId = player.UserId,
+		})
+	end)
+
+	createRemote("GetPlaylist", function(player: Player, options: any)
+		if not checkRateLimit(player) then
+			return nil, "Rate limited — please wait before making another request"
+		end
+		if type(options) ~= "table" or type(options.playlist_id) ~= "string" then
+			return nil, "getPlaylist requires a table with a playlist_id string"
+		end
+		return self:getPlaylist({
+			playlist_id = options.playlist_id,
+			playerId = player.UserId,
+		})
+	end)
+
+	createRemote("ListPlaylists", function(player: Player)
+		if not checkRateLimit(player) then
+			return nil, "Rate limited — please wait before making another request"
+		end
+		return self:listPlaylists(player.UserId)
+	end)
+
+	-- Clean up rate limit entries when players leave
+	Players.PlayerRemoving:Connect(function(player: Player)
+		playerLastRequest[player.UserId] = nil
+	end)
+
+	folder.Parent = ReplicatedStorage
+end
+
 return AudioScape

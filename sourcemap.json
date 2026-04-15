@@ -1,1 +1,1 @@
-{"name":"AudioScape","className":"ModuleScript","filePaths":["src/init.luau","default.project.json"],"children":[{"name":"AudioScapeMusicPlayer","className":"ModuleScript","filePaths":["src/AudioScapeMusicPlayer.luau"]}]}
+{"name":"AudioScape","className":"ModuleScript","filePaths":["src/init.luau","default.project.json"],"children":[{"name":"AudioScapeMusicPlayer","className":"ModuleScript","filePaths":["src/AudioScapeMusicPlayer.luau"]},{"name":"AudioScapeClient","className":"ModuleScript","filePaths":["src/AudioScapeClient.luau"]}]}

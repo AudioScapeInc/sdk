@@ -252,6 +252,39 @@ end
 
 ---
 
+## Client Access
+
+The SDK runs on the server (HttpService requires server context). To call AudioScape from LocalScripts, enable client access on the server and use the `AudioScapeClient` companion module.
+
+### Server Setup
+
+Call `enableClientAccess()` once on the server to create the RemoteFunctions:
+
+```lua
+local client = AudioScape.new(apiKey)
+client:enableClientAccess()
+```
+
+This creates an `AudioScapeRemotes` folder in `ReplicatedStorage` with a RemoteFunction for each API method. Requests are rate-limited per player (1 request/second) and `playerId` is automatically set from the calling player.
+
+### Client Usage
+
+Place `AudioScapeClient.luau` in `ReplicatedStorage`. Then use it from any LocalScript:
+
+```lua
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local AudioScapeClient = require(ReplicatedStorage.AudioScapeClient)
+
+local client = AudioScapeClient.new()
+local result, err = client:search({ query = "chill beats", limit = 10 })
+```
+
+**Available client methods:** `search`, `similar`, `browse`, `getPlaylist`, `listPlaylists`
+
+> **Note:** `AudioScapeClient.luau` must be placed in `ReplicatedStorage` manually (or via the Studio plugin). The server SDK's Wally realm is `server`, so it installs to `ServerScriptService` — the client module is distributed separately.
+
+---
+
 ## Analytics
 
 Analytics are collected automatically — events are buffered in memory and flushed every 30 seconds (configurable). On game close, remaining events are flushed via `game:BindToClose`. No player PII is stored; `playerId` is used only for unique player counts.
@@ -348,6 +381,7 @@ See the [`examples/`](examples/) folder for complete usage examples:
 
 - **MusicPlayerBasic.luau** — Search, queue, and play with auto-analytics
 - **MusicPlayerPlaylist.luau** — Play a configured playlist with the AudioScapeMusicPlayer
+- **ClientSearch.luau** — Search from a LocalScript using AudioScapeClient
 - **SearchBox.luau** — Wire search to a TextBox input via RemoteEvent
 - **BrowseGenres.luau** — List genres and play a random track
 - **SimilarTrack.luau** — Auto-playlist using similar tracks
