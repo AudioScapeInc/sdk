@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.7.0
+
+### Added
+
+- `client:getStructure({ asset_id })` — fetch beat grid + section/phrase structure for a track. Response includes `bpm`, `track_energy`, downbeats, and labelled sections (Intro/Verse/Chorus/Drop/Bridge/Climax/Outro/etc.) with energy 1–4
+- `client:beatAtTime(asset_id, t)` — find the closest beat to a given time. Useful for syncing animations or VFX
+- `client:sectionAtTime(asset_id, t, level?)` — find the section (or phrase) covering a time. Lets you trigger different effects on Verse vs Drop
+- `AudioScapeClient.getStructure(options)` exposed on the client-side companion (RemoteFunction `GetStructure`)
+- New types: `StructureOptions`, `StructureResult`, `BeatGrid`, `Section`, `BeatHit`
+- Structure responses are cached client-side per `asset_id` so repeated `beatAtTime`/`sectionAtTime` calls are free
+
+## v0.6.0
+
+### Added
+
+- `SearchOptions.filters` extended with `min_play_count`, `min_likes`, and `created_after` for popularity and recency filtering
+- `SimilarOptions.filters` added — supports `genres` and `duration` (mirrors search filter shape)
+
 ## v0.5.1
 
 ### Fixed

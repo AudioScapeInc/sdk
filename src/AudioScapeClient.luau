@@ -51,7 +51,7 @@ function AudioScapeClient.search(self: AudioScapeClientInstance, options: { quer
 end
 
 -- Find tracks that sound similar to a given track.
-function AudioScapeClient.similar(self: AudioScapeClientInstance, options: { asset_id: string, limit: number?, offset: number? })
+function AudioScapeClient.similar(self: AudioScapeClientInstance, options: { asset_id: string, limit: number?, offset: number?, filters: any? })
 	return invoke(self._remotes, "Similar", options)
 end
 
@@ -68,6 +68,11 @@ end
 -- List all playlists configured for the API key.
 function AudioScapeClient.listPlaylists(self: AudioScapeClientInstance)
 	return invoke(self._remotes, "ListPlaylists")
+end
+
+-- Fetch beat grid + section structure for a track (beat-sync animations, lighting cues).
+function AudioScapeClient.getStructure(self: AudioScapeClientInstance, options: { asset_id: string })
+	return invoke(self._remotes, "GetStructure", options)
 end
 
 return AudioScapeClient

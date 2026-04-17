@@ -94,8 +94,11 @@ local result, err = client:search({
     offset = 0,                              -- optional
     playerId = player.UserId,                -- optional
     filters = {                              -- optional
-        genres = { "electronic", "pop" },
-        duration = { min = 60, max = 180 },
+        genres = { "electronic", "pop" },    -- Roblox music_genre slugs (lowercase)
+        duration = { min = 60, max = 180 },  -- seconds
+        min_play_count = 100000,             -- min lifetime Roblox plays
+        min_likes = 500,                     -- min lifetime Roblox likes
+        created_after = "2024-01-01",        -- YYYY-MM-DD
     },
 })
 -- result = { tracks, artists, albums, meta }
@@ -111,6 +114,10 @@ local result, err = client:similar({
     limit = 10,                  -- optional
     offset = 0,                  -- optional
     playerId = player.UserId,    -- optional
+    filters = {                  -- optional
+        genres = { "electronic" },
+        duration = { min = 60, max = 180 },
+    },
 })
 -- result = { tracks, meta }
 ```

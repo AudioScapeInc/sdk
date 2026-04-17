@@ -31,6 +31,9 @@ export type SearchOptions = {
 			min: number?,
 			max: number?,
 		}?,
+		min_play_count: number?,
+		min_likes: number?,
+		created_after: string?,
 	}?,
 }
 
@@ -39,6 +42,13 @@ export type SimilarOptions = {
 	limit: number?,
 	offset: number?,
 	playerId: number?,
+	filters: {
+		genres: { string }?,
+		duration: {
+			min: number?,
+			max: number?,
+		}?,
+	}?,
 }
 
 export type BrowseOptions = {
@@ -103,6 +113,44 @@ export type BrowseTracksResult = {
 		type: string,
 		name: string,
 	},
+}
+
+export type StructureOptions = {
+	asset_id: string,
+	playerId: number?,
+}
+
+export type BeatGrid = {
+	times: { number },
+	downbeats: { number },
+}
+
+export type Section = {
+	start: number,
+	end: number,
+	label: string?,
+	energy: number?,
+	bar_start: number?,
+	bar_end: number?,
+	bars: number?,
+	color: string?,
+}
+
+export type StructureResult = {
+	asset_id: string,
+	duration: number?,
+	bpm: number?,
+	track_energy: number?,
+	beat_grid: BeatGrid?,
+	sections: { Section },
+	phrases: { Section },
+}
+
+export type BeatHit = {
+	index: number,
+	time: number,
+	beat_num: number,
+	is_downbeat: boolean,
 }
 
 export type PlaylistOptions = {
@@ -174,6 +222,7 @@ type AudioScapeClient = typeof(setmetatable({} :: {
 	_analyticsRunning: boolean,
 	_analyticsBackoff: number,
 	_analyticsConsecutiveFailures: number,
+	_structureCache: { [string]: StructureResult },
 }, AudioScape))
 
 local function formatError(statusCode: number, body: string): string
@@ -373,6 +422,7 @@ function AudioScape.new(apiKey: any): AudioScapeClient
 		_analyticsRunning = false,
 		_analyticsBackoff = DEFAULT_BATCH_INTERVAL,
 		_analyticsConsecutiveFailures = 0,
+		_structureCache = {},
 	}, AudioScape)
 
 	-- Start analytics loop on server only
@@ -536,6 +586,7 @@ function AudioScape.similar(self: AudioScapeClient, options: SimilarOptions): (S
 		asset_id = options.asset_id,
 		limit = options.limit,
 		offset = options.offset,
+		filters = options.filters,
 	}
 
 	return request(self, "/v1/similar", body, options.playerId)
@@ -574,6 +625,103 @@ function AudioScape.listPlaylists(self: AudioScapeClient, playerId: number?): (L
 	}
 
 	return request(self, "/v1/playlist", body, playerId)
+end
+
+--[[ ──────────────────────────────────────────
+     Track Structure (beat grid + sections)
+     ────────────────────────────────────────── ]]
+
+function AudioScape.getStructure(self: AudioScapeClient, options: StructureOptions): (StructureResult?, string?)
+	if type(options.asset_id) ~= "string" or #options.asset_id == 0 then
+		return nil, "getStructure requires a non-empty asset_id string"
+	end
+
+	local cached = self._structureCache[options.asset_id]
+	if cached then
+		return cached, nil
+	end
+
+	local result, err = request(self, "/v1/track/structure", { asset_id = options.asset_id }, options.playerId)
+	if not result then
+		return nil, err
+	end
+
+	self._structureCache[options.asset_id] = result
+	return result, nil
+end
+
+-- Locate the beat closest in time to `t` seconds. Uses binary search over the
+-- sorted beat_times array. Returns nil if the asset has no beat_grid.
+function AudioScape.beatAtTime(self: AudioScapeClient, asset_id: string, t: number): (BeatHit?, string?)
+	local structure, err = self:getStructure({ asset_id = asset_id })
+	if not structure then
+		return nil, err
+	end
+	local grid = structure.beat_grid
+	if not grid or #grid.times == 0 then
+		return nil, nil
+	end
+
+	local times = grid.times
+	local lo, hi = 1, #times
+	while lo < hi do
+		local mid = (lo + hi) // 2
+		if times[mid] < t then
+			lo = mid + 1
+		else
+			hi = mid
+		end
+	end
+
+	-- lo now points to the first beat >= t; pick whichever neighbor is closer.
+	local idx = lo
+	if idx > 1 and math.abs(times[idx - 1] - t) <= math.abs(times[idx] - t) then
+		idx = idx - 1
+	end
+
+	local beatTime = times[idx]
+	-- beat_num isn't returned to the SDK directly; reconstruct from the
+	-- downbeats list (a beat is a downbeat iff its time appears in downbeats).
+	local downbeatSet: { [number]: boolean } = {}
+	for _, dt in ipairs(grid.downbeats) do
+		downbeatSet[dt] = true
+	end
+	local isDownbeat = downbeatSet[beatTime] == true
+
+	-- beat_num: count beats since the most recent downbeat (1..4)
+	local beatNum = 1
+	if not isDownbeat then
+		for i = idx - 1, 1, -1 do
+			if downbeatSet[times[i]] then
+				beatNum = (idx - i) + 1
+				break
+			end
+		end
+	end
+
+	return {
+		index = idx,
+		time = beatTime,
+		beat_num = beatNum,
+		is_downbeat = isDownbeat,
+	}, nil
+end
+
+-- Find the section (or phrase) containing time `t`. `level` defaults to "section".
+function AudioScape.sectionAtTime(self: AudioScapeClient, asset_id: string, t: number, level: string?): (Section?, string?)
+	local structure, err = self:getStructure({ asset_id = asset_id })
+	if not structure then
+		return nil, err
+	end
+
+	local list = if level == "phrase" then structure.phrases else structure.sections
+	for _, section in ipairs(list) do
+		if t >= section.start and t < section.end then
+			return section, nil
+		end
+	end
+
+	return nil, nil
 end
 
 --[[ ──────────────────────────────────────────
@@ -647,6 +795,7 @@ function AudioScape.enableClientAccess(self: AudioScapeClient)
 			asset_id = options.asset_id,
 			limit = options.limit,
 			offset = options.offset,
+			filters = options.filters,
 			playerId = player.UserId,
 		})
 	end)
@@ -685,6 +834,19 @@ function AudioScape.enableClientAccess(self: AudioScapeClient)
 			return nil, "Rate limited — please wait before making another request"
 		end
 		return self:listPlaylists(player.UserId)
+	end)
+
+	createRemote("GetStructure", function(player: Player, options: any)
+		if not checkRateLimit(player) then
+			return nil, "Rate limited — please wait before making another request"
+		end
+		if type(options) ~= "table" or type(options.asset_id) ~= "string" then
+			return nil, "getStructure requires a table with an asset_id string"
+		end
+		return self:getStructure({
+			asset_id = options.asset_id,
+			playerId = player.UserId,
+		})
 	end)
 
 	-- Clean up rate limit entries when players leave
