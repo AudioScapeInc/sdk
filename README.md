@@ -1,6 +1,6 @@
 # AudioScape SDK for Roblox
 
-A Luau SDK for the [AudioScape Developer API](https://developer.audioscape.ai) — search, browse, discover music, and track analytics for your Roblox experiences.
+A Luau SDK for the [AudioScape Developer API](https://developer.audioscape.ai) — search music and sound effects, browse the catalog, sync to beat-level track structure, and track analytics for your Roblox experiences.
 
 > **Note:** This SDK uses `HttpService:RequestAsync()` and must run on the **server** (Script, not LocalScript). You must enable **Allow HTTP Requests** in your experience's Game Settings → Security.
 
@@ -137,6 +137,89 @@ local result, err = client:browse({ type = "genre", name = "electronic", limit =
 ```
 
 **Browse types:** `artist`, `album`, `genre`, `mood`
+
+### `client:sfxSearch(options)`
+
+Search the sound effects catalog. Pass a free-text `query`, or browse a UCS category by passing `filters.categories` (the API synthesizes the query under the hood).
+
+```lua
+local result, err = client:sfxSearch({
+    query = "metal sword impact short",  -- optional if filters.categories is set
+    limit = 20,                          -- optional (default: 20, max: 100)
+    offset = 0,                          -- optional
+    playerId = player.UserId,            -- optional
+    filters = {                          -- optional
+        categories = { "WEAPON" },       -- UCS category names
+        subcategories = { "SWORD" },     -- UCS subcategories
+        duration = { min = 0, max = 1 }, -- seconds
+        min_likes = 100,                 -- min lifetime Roblox likes
+        created_after = "2024-01-01",    -- YYYY-MM-DD
+    },
+})
+-- result = { tracks, categories, subcategories, meta }
+```
+
+### `client:sfxSimilar(options)`
+
+Find sound effects acoustically similar to a given asset.
+
+```lua
+local result, err = client:sfxSimilar({
+    asset_id = "9120386436",     -- required
+    limit = 10,                  -- optional
+    offset = 0,                  -- optional
+    playerId = player.UserId,    -- optional
+    filters = {                  -- optional
+        categories = { "AMBIENCE" },
+        duration = { min = 0, max = 5 },
+    },
+})
+-- result = { tracks, meta }
+```
+
+### `client:getSfxTaxonomy()`
+
+Fetch the full `broader_category → category → subcategory` hierarchy for building SFX picker UIs. Server-cached for 10 minutes, so polling is cheap.
+
+```lua
+local taxonomy, err = client:getSfxTaxonomy()
+-- taxonomy.taxonomy = { { broader_category, categories = { { category, subcategories = { string } } } } }
+```
+
+### `client:getStructure(options)`
+
+Fetch the beat grid and section structure for a track. Use this to sync animations, lighting, or VFX to the music.
+
+```lua
+local structure, err = client:getStructure({
+    asset_id = "1843209165",  -- required
+})
+-- structure = { asset_id, duration, bpm, track_energy, beat_grid, sections, phrases }
+-- structure.beat_grid = { times = { number }, downbeats = { number } }
+-- structure.sections = { { start, end, label, energy, bar_start, bar_end, color } }
+```
+
+`label` values come from: `Intro`, `Verse`, `Chorus`, `Drop`, `Bridge`, `Climax`, `Outro`, `Main`, `Break`, `Build`, `Breakdown`, `Transition`, `Peak`. `energy` is `1`–`4`.
+
+### `client:beatAtTime(asset_id, t)`
+
+Locate the closest beat to a time. Useful for snapping animations to the grid. Reuses the cached structure response, so repeat calls are free.
+
+```lua
+local beat, err = client:beatAtTime("1843209165", currentTime)
+-- beat = { time, is_downbeat, bar }
+```
+
+### `client:sectionAtTime(asset_id, t, level?)`
+
+Locate the section (or phrase, with `level = "phrase"`) covering a time. Trigger different effects on Verse vs Drop.
+
+```lua
+local section = client:sectionAtTime("1843209165", currentTime)
+if section and section.label == "Drop" then
+    workspace.CurrentCamera.FieldOfView = 70 + section.energy * 5
+end
+```
 
 ### `client:getPlaylist(options)`
 
@@ -286,7 +369,7 @@ local client = AudioScapeClient.new()
 local result, err = client:search({ query = "chill beats", limit = 10 })
 ```
 
-**Available client methods:** `search`, `similar`, `browse`, `getPlaylist`, `listPlaylists`
+**Available client methods:** `search`, `similar`, `browse`, `sfxSearch`, `sfxSimilar`, `getSfxTaxonomy`, `getStructure`, `getPlaylist`, `listPlaylists`
 
 > **Note:** `AudioScapeClient.luau` must be placed in `ReplicatedStorage` manually (or via the Studio plugin). The server SDK's Wally realm is `server`, so it installs to `ServerScriptService` — the client module is distributed separately.
 
@@ -393,6 +476,8 @@ See the [`examples/`](examples/) folder for complete usage examples:
 - **BrowseGenres.luau** — List genres and play a random track
 - **SimilarTrack.luau** — Auto-playlist using similar tracks
 - **PlaylistStation.luau** — Fetch and play a configured station playlist
+- **SfxImpactPool.luau** — Pre-fetch a variety pool of SFX clips and randomize per swing
+- **StructureBeatSync.luau** — Schedule particle bursts on downbeats and punch the camera FOV on Drops
 
 ## Links
 
