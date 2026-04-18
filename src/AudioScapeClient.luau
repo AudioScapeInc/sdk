@@ -55,6 +55,21 @@ function AudioScapeClient.similar(self: AudioScapeClientInstance, options: { ass
 	return invoke(self._remotes, "Similar", options)
 end
 
+-- Search the SFX catalog by free-text query or category browse.
+function AudioScapeClient.sfxSearch(self: AudioScapeClientInstance, options: { query: string?, limit: number?, offset: number?, filters: any? })
+	return invoke(self._remotes, "SfxSearch", options)
+end
+
+-- Find sound effects acoustically similar to a given asset.
+function AudioScapeClient.sfxSimilar(self: AudioScapeClientInstance, options: { asset_id: string, limit: number?, offset: number?, filters: any? })
+	return invoke(self._remotes, "SfxSimilar", options)
+end
+
+-- Fetch the SFX taxonomy hierarchy (broader_category → category → subcategory).
+function AudioScapeClient.getSfxTaxonomy(self: AudioScapeClientInstance)
+	return invoke(self._remotes, "GetSfxTaxonomy")
+end
+
 -- Browse by artist, album, genre, or mood.
 function AudioScapeClient.browse(self: AudioScapeClientInstance, options: { type: string, name: string?, limit: number?, offset: number? })
 	return invoke(self._remotes, "Browse", options)

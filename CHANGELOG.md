@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.8.0
+
+### Added
+
+- `client:sfxSearch({ query?, filters?, limit?, offset? })` — search the sound effects catalog. Pass a free-text `query`, or pass `filters.categories` (with optional `filters.subcategories`) to browse a category — the API injects a curated query under the hood
+- `client:sfxSimilar({ asset_id, filters?, limit?, offset? })` — find sound effects acoustically similar to a given asset
+- `client:getSfxTaxonomy()` — fetch the broader-category → category → subcategory hierarchy for building SFX picker UIs (10-minute server cache, so polling is cheap)
+- `AudioScapeClient.sfxSearch(options)`, `AudioScapeClient.sfxSimilar(options)`, and `AudioScapeClient.getSfxTaxonomy()` exposed on the client-side companion (RemoteFunctions `SfxSearch`, `SfxSimilar`, `GetSfxTaxonomy`)
+- New types: `SfxSearchOptions`, `SfxSimilarOptions`, `SfxTrack`, `SfxSearchResult`, `SfxSimilarResult`, `SfxTaxonomyResult`, `SfxTaxonomyGroup`, `SfxTaxonomyCategory`
+
 ## v0.7.0
 
 ### Added

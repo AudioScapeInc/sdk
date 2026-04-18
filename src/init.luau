@@ -51,6 +51,38 @@ export type SimilarOptions = {
 	}?,
 }
 
+export type SfxSearchOptions = {
+	query: string?,
+	limit: number?,
+	offset: number?,
+	playerId: number?,
+	filters: {
+		categories: { string }?,
+		subcategories: { string }?,
+		duration: {
+			min: number?,
+			max: number?,
+		}?,
+		min_likes: number?,
+		created_after: string?,
+	}?,
+}
+
+export type SfxSimilarOptions = {
+	asset_id: string,
+	limit: number?,
+	offset: number?,
+	playerId: number?,
+	filters: {
+		categories: { string }?,
+		subcategories: { string }?,
+		duration: {
+			min: number?,
+			max: number?,
+		}?,
+	}?,
+}
+
 export type BrowseOptions = {
 	type: string,
 	name: string?,
@@ -91,6 +123,62 @@ export type SimilarResult = {
 		total: number,
 		limit: number,
 		offset: number,
+	},
+}
+
+export type SfxTrack = {
+	asset_id: string,
+	name: string,
+	description: string,
+	category: string,
+	subcategory: string,
+	tags: string,
+	duration: number,
+	score: number,
+	created_at: string,
+	updated_at: string,
+	creator_id: number?,
+	creator_name: string,
+}
+
+export type SfxSearchResult = {
+	tracks: { SfxTrack },
+	categories: { { name: string, track_count: number } },
+	subcategories: { { name: string, category: string, track_count: number } },
+	meta: {
+		total: number,
+		limit: number,
+		offset: number,
+		search_method: string,
+		synthesized_query: string?,
+	},
+}
+
+export type SfxSimilarResult = {
+	tracks: { SfxTrack },
+	meta: {
+		total: number,
+		limit: number,
+		offset: number,
+	},
+}
+
+export type SfxTaxonomyCategory = {
+	category: string,
+	subcategories: { string },
+}
+
+export type SfxTaxonomyGroup = {
+	broader_category: string,
+	categories: { SfxTaxonomyCategory },
+}
+
+export type SfxTaxonomyResult = {
+	taxonomy: { SfxTaxonomyGroup },
+	meta: {
+		broader_category_count: number,
+		category_count: number,
+		subcategory_count: number,
 	},
 }
 
@@ -592,6 +680,52 @@ function AudioScape.similar(self: AudioScapeClient, options: SimilarOptions): (S
 	return request(self, "/v1/similar", body, options.playerId)
 end
 
+-- Search the SFX catalog. Pass `query` for free-text search, or pass
+-- `filters.categories` (with optional `filters.subcategories`) to browse a
+-- category — the API auto-injects a curated query so you get good results
+-- without needing to know the right search terms.
+function AudioScape.sfxSearch(self: AudioScapeClient, options: SfxSearchOptions): (SfxSearchResult?, string?)
+	local hasQuery = type(options.query) == "string" and #options.query > 0
+	local hasCategory = options.filters
+		and type(options.filters.categories) == "table"
+		and #options.filters.categories > 0
+	if not hasQuery and not hasCategory then
+		return nil, "sfxSearch requires either a query string or filters.categories"
+	end
+
+	local body: { [string]: any } = {
+		query = options.query,
+		limit = options.limit,
+		offset = options.offset,
+		filters = options.filters,
+	}
+
+	return request(self, "/v1/sfx/search", body, options.playerId)
+end
+
+-- Fetch the SFX taxonomy hierarchy (broader_category → category → subcategory)
+-- so you can build pill UIs that mirror filters.categories / .subcategories on
+-- /v1/sfx/search. The API caches the response for 10 minutes.
+function AudioScape.getSfxTaxonomy(self: AudioScapeClient): (SfxTaxonomyResult?, string?)
+	return request(self, "/v1/sfx/taxonomy", {}, nil)
+end
+
+-- Find sound effects acoustically similar to a given asset.
+function AudioScape.sfxSimilar(self: AudioScapeClient, options: SfxSimilarOptions): (SfxSimilarResult?, string?)
+	if type(options.asset_id) ~= "string" or #options.asset_id == 0 then
+		return nil, "sfxSimilar requires a non-empty asset_id string"
+	end
+
+	local body: { [string]: any } = {
+		asset_id = options.asset_id,
+		limit = options.limit,
+		offset = options.offset,
+		filters = options.filters,
+	}
+
+	return request(self, "/v1/sfx/similar", body, options.playerId)
+end
+
 function AudioScape.browse(self: AudioScapeClient, options: BrowseOptions): (BrowseListResult | BrowseTracksResult | nil, string?)
 	if type(options.type) ~= "string" or not VALID_BROWSE_TYPES[options.type] then
 		return nil, "browse requires type to be one of: artist, album, genre, mood"
@@ -792,6 +926,52 @@ function AudioScape.enableClientAccess(self: AudioScapeClient)
 			return nil, "similar requires a table with an asset_id string"
 		end
 		return self:similar({
+			asset_id = options.asset_id,
+			limit = options.limit,
+			offset = options.offset,
+			filters = options.filters,
+			playerId = player.UserId,
+		})
+	end)
+
+	createRemote("SfxSearch", function(player: Player, options: any)
+		if not checkRateLimit(player) then
+			return nil, "Rate limited — please wait before making another request"
+		end
+		if type(options) ~= "table" then
+			return nil, "sfxSearch requires a table"
+		end
+		local hasQuery = type(options.query) == "string" and #options.query > 0
+		local hasCategory = type(options.filters) == "table"
+			and type(options.filters.categories) == "table"
+			and #options.filters.categories > 0
+		if not hasQuery and not hasCategory then
+			return nil, "sfxSearch requires either a query string or filters.categories"
+		end
+		return self:sfxSearch({
+			query = options.query,
+			limit = options.limit,
+			offset = options.offset,
+			filters = options.filters,
+			playerId = player.UserId,
+		})
+	end)
+
+	createRemote("GetSfxTaxonomy", function(player: Player)
+		if not checkRateLimit(player) then
+			return nil, "Rate limited — please wait before making another request"
+		end
+		return self:getSfxTaxonomy()
+	end)
+
+	createRemote("SfxSimilar", function(player: Player, options: any)
+		if not checkRateLimit(player) then
+			return nil, "Rate limited — please wait before making another request"
+		end
+		if type(options) ~= "table" or type(options.asset_id) ~= "string" then
+			return nil, "sfxSimilar requires a table with an asset_id string"
+		end
+		return self:sfxSimilar({
 			asset_id = options.asset_id,
 			limit = options.limit,
 			offset = options.offset,
