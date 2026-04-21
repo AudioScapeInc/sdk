@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.9.1
+
+### Added
+
+- `examples/TrendingLobbyJukebox.luau` — daily-trending music piped through `AudioScapeMusicPlayer` with a now-playing label
+- `examples/TrendingSfxBoard.luau` — lobby sound board built from `client:sfxBrowse({ type = "trending" })`
+
+### Docs
+
+- README install snippet bumped to `0.9.1`; trending music description tightened
+- CHANGELOG copy polish on the v0.9.0 entry
+
 ## v0.9.0
 
 ### Added

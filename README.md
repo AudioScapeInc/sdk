@@ -12,7 +12,7 @@ Add to your `wally.toml`:
 
 ```toml
 [dependencies]
-AudioScape = "this-fifo/audioscape-sdk@0.9.0"
+AudioScape = "this-fifo/audioscape-sdk@0.9.1"
 ```
 
 Then run:
@@ -142,7 +142,7 @@ local result, err = client:browse({ type = "trending", limit = 50 })
 
 **Browse types:** `artist`, `album`, `genre`, `mood`, `trending`
 
-Trending is a popularity-ranked list of music tracks, refreshed daily. Player engagement signals (plays, favorites, votes, queue adds, listen duration) are exponentially decayed over a 60-day window so recent activity dominates.
+Trending is a popularity-ranked list of music tracks refreshed daily, capped at 200 entries. Player engagement signals (plays, favorites, votes, queue adds, listen duration, plus custom events) are exponentially decayed over a 60-day window with a 30-day half-life, so recent activity dominates.
 
 ### `client:sfxBrowse(options)`
 
@@ -494,6 +494,8 @@ See the [`examples/`](examples/) folder for complete usage examples:
 - **PlaylistStation.luau** — Fetch and play a configured station playlist
 - **SfxImpactPool.luau** — Pre-fetch a variety pool of SFX clips and randomize per swing
 - **StructureBeatSync.luau** — Schedule particle bursts on downbeats and punch the camera FOV on Drops
+- **TrendingLobbyJukebox.luau** — Drop-in lobby music from `browse({ type = "trending" })` piped through the music player
+- **TrendingSfxBoard.luau** — Lobby sound board built from `sfxBrowse({ type = "trending" })`
 
 ## Links
 
