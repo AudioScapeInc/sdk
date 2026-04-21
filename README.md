@@ -12,7 +12,7 @@ Add to your `wally.toml`:
 
 ```toml
 [dependencies]
-AudioScape = "this-fifo/audioscape-sdk@0.8.0"
+AudioScape = "this-fifo/audioscape-sdk@0.9.0"
 ```
 
 Then run:
@@ -124,7 +124,7 @@ local result, err = client:similar({
 
 ### `client:browse(options)`
 
-Browse by artist, album, genre, or mood.
+Browse by artist, album, genre, mood, or trending.
 
 ```lua
 -- List all genres
@@ -134,9 +134,25 @@ local result, err = client:browse({ type = "genre" })
 -- Get tracks for a specific genre
 local result, err = client:browse({ type = "genre", name = "electronic", limit = 20 })
 -- result = { tracks, meta }
+
+-- Trending music (no name needed — returns the top tracks directly)
+local result, err = client:browse({ type = "trending", limit = 50 })
+-- result = { tracks, meta }
 ```
 
-**Browse types:** `artist`, `album`, `genre`, `mood`
+**Browse types:** `artist`, `album`, `genre`, `mood`, `trending`
+
+Trending is a popularity-ranked list of music tracks, refreshed daily. Player engagement signals (plays, favorites, votes, queue adds, listen duration) are exponentially decayed over a 60-day window so recent activity dominates.
+
+### `client:sfxBrowse(options)`
+
+Browse the SFX catalog. v1 only supports `type = "trending"` — a popularity-ranked list of sound effects, refreshed daily on the same schedule as music trending.
+
+```lua
+local result, err = client:sfxBrowse({ type = "trending", limit = 50 })
+-- result = { tracks, meta }
+-- result.tracks = { { asset_id, name, description, category, subcategory, tags, duration, ... } }
+```
 
 ### `client:sfxSearch(options)`
 
@@ -369,7 +385,7 @@ local client = AudioScapeClient.new()
 local result, err = client:search({ query = "chill beats", limit = 10 })
 ```
 
-**Available client methods:** `search`, `similar`, `browse`, `sfxSearch`, `sfxSimilar`, `getSfxTaxonomy`, `getStructure`, `getPlaylist`, `listPlaylists`
+**Available client methods:** `search`, `similar`, `browse`, `sfxSearch`, `sfxSimilar`, `sfxBrowse`, `getSfxTaxonomy`, `getStructure`, `getPlaylist`, `listPlaylists`
 
 > **Note:** `AudioScapeClient.luau` must be placed in `ReplicatedStorage` manually (or via the Studio plugin). The server SDK's Wally realm is `server`, so it installs to `ServerScriptService` — the client module is distributed separately.
 

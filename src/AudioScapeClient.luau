@@ -70,9 +70,14 @@ function AudioScapeClient.getSfxTaxonomy(self: AudioScapeClientInstance)
 	return invoke(self._remotes, "GetSfxTaxonomy")
 end
 
--- Browse by artist, album, genre, or mood.
+-- Browse by artist, album, genre, mood, or trending.
 function AudioScapeClient.browse(self: AudioScapeClientInstance, options: { type: string, name: string?, limit: number?, offset: number? })
 	return invoke(self._remotes, "Browse", options)
+end
+
+-- Browse the SFX catalog. v1 only supports type='trending'.
+function AudioScapeClient.sfxBrowse(self: AudioScapeClientInstance, options: { type: string, name: string?, limit: number?, offset: number? })
+	return invoke(self._remotes, "SfxBrowse", options)
 end
 
 -- Fetch a configured playlist and its tracks.

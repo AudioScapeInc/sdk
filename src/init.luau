@@ -13,6 +13,11 @@ local VALID_BROWSE_TYPES = {
 	album = true,
 	genre = true,
 	mood = true,
+	trending = true,
+}
+
+local VALID_SFX_BROWSE_TYPES = {
+	trending = true,
 }
 
 -- Default analytics settings
@@ -84,7 +89,15 @@ export type SfxSimilarOptions = {
 }
 
 export type BrowseOptions = {
-	type: string,
+	type: string, -- "artist" | "album" | "genre" | "mood" | "trending"
+	name: string?,
+	limit: number?,
+	offset: number?,
+	playerId: number?,
+}
+
+export type SfxBrowseOptions = {
+	type: string, -- "trending"
 	name: string?,
 	limit: number?,
 	offset: number?,
@@ -199,7 +212,20 @@ export type BrowseTracksResult = {
 		limit: number,
 		offset: number,
 		type: string,
-		name: string,
+		-- Present for drill-downs (artist/album/genre/mood) and absent for
+		-- trending without an explicit window — same field, different surface.
+		name: string?,
+	},
+}
+
+export type SfxBrowseResult = {
+	tracks: { SfxTrack },
+	meta: {
+		total: number,
+		limit: number,
+		offset: number,
+		type: string,
+		name: string?,
 	},
 }
 
@@ -728,7 +754,7 @@ end
 
 function AudioScape.browse(self: AudioScapeClient, options: BrowseOptions): (BrowseListResult | BrowseTracksResult | nil, string?)
 	if type(options.type) ~= "string" or not VALID_BROWSE_TYPES[options.type] then
-		return nil, "browse requires type to be one of: artist, album, genre, mood"
+		return nil, "browse requires type to be one of: artist, album, genre, mood, trending"
 	end
 
 	local body: { [string]: any } = {
@@ -739,6 +765,24 @@ function AudioScape.browse(self: AudioScapeClient, options: BrowseOptions): (Bro
 	}
 
 	return request(self, "/v1/browse", body, options.playerId)
+end
+
+-- Browse sound effects. v1 only supports type='trending' — a global,
+-- popularity-ranked list of SFX assets. Mirrors browse() but returns
+-- SfxTrack-shaped entries with no list mode.
+function AudioScape.sfxBrowse(self: AudioScapeClient, options: SfxBrowseOptions): (SfxBrowseResult?, string?)
+	if type(options.type) ~= "string" or not VALID_SFX_BROWSE_TYPES[options.type] then
+		return nil, "sfxBrowse requires type to be one of: trending"
+	end
+
+	local body: { [string]: any } = {
+		type = options.type,
+		name = options.name,
+		limit = options.limit,
+		offset = options.offset,
+	}
+
+	return request(self, "/v1/sfx/browse", body, options.playerId)
 end
 
 function AudioScape.getPlaylist(self: AudioScapeClient, options: PlaylistOptions): (PlaylistResult?, string?)
@@ -988,6 +1032,22 @@ function AudioScape.enableClientAccess(self: AudioScapeClient)
 			return nil, "browse requires a table with a type string"
 		end
 		return self:browse({
+			type = options.type,
+			name = options.name,
+			limit = options.limit,
+			offset = options.offset,
+			playerId = player.UserId,
+		})
+	end)
+
+	createRemote("SfxBrowse", function(player: Player, options: any)
+		if not checkRateLimit(player) then
+			return nil, "Rate limited — please wait before making another request"
+		end
+		if type(options) ~= "table" or type(options.type) ~= "string" then
+			return nil, "sfxBrowse requires a table with a type string"
+		end
+		return self:sfxBrowse({
 			type = options.type,
 			name = options.name,
 			limit = options.limit,

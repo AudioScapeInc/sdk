@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.9.0
+
+### Added
+
+- `client:browse({ type = "trending", limit, offset })` — popularity-ranked list of music tracks. No `name` required; returns `{ tracks, meta }` directly. Refreshed daily; player engagement signals (plays, favorites, votes, queue adds, listen duration, plus custom events) are exponentially decayed over a 60-day window
+- `client:sfxBrowse({ type = "trending", limit, offset })` — popularity-ranked list of sound effects. Mirrors `browse()` but returns `SfxTrack`-shaped entries from the SFX catalog
+- `AudioScapeClient.sfxBrowse(options)` exposed on the client-side companion (RemoteFunction `SfxBrowse`)
+- New types: `SfxBrowseOptions`, `SfxBrowseResult`
+
 ## v0.8.0
 
 ### Added
