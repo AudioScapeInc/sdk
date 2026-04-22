@@ -392,6 +392,56 @@ local function request(self: AudioScapeClient, path: string, body: { [string]: a
 	return decoded, nil
 end
 
+-- Skips nil values so callers don't need to filter their options table.
+local function buildQuery(params: { [string]: any }): string
+	local parts: { string } = {}
+	for key, value in pairs(params) do
+		if value ~= nil then
+			table.insert(parts, key .. "=" .. HttpService:UrlEncode(tostring(value)))
+		end
+	end
+	if #parts == 0 then
+		return ""
+	end
+	return "?" .. table.concat(parts, "&")
+end
+
+-- v0.10.0: GET sibling of request() for endpoints CloudFront edge-caches
+-- (browse, sfxBrowse, sfxTaxonomy). API still accepts the equivalent POST
+-- for older SDK clients; flagged as a v1.0.0 cleanup candidate to fold both
+-- into one method-aware helper.
+local function requestGet(self: AudioScapeClient, path: string, query: { [string]: any }, playerId: number?): (any, string?)
+	local headers: { [string]: any } = {
+		["x-api-key"] = self._apiKey,
+		["X-Universe-Id"] = self._universeId,
+		["X-Place-Id"] = self._placeId,
+	}
+	if playerId then
+		headers["X-Player-Id"] = tostring(playerId)
+	end
+
+	local ok, result = pcall(HttpService.RequestAsync, HttpService, {
+		Url = BASE_URL .. path .. buildQuery(query),
+		Method = "GET",
+		Headers = headers,
+	})
+
+	if not ok then
+		return nil, "Network error: " .. tostring(result)
+	end
+
+	if not result.Success then
+		return nil, formatError(result.StatusCode, result.Body)
+	end
+
+	local decodeOk, decoded = pcall(HttpService.JSONDecode, HttpService, result.Body)
+	if not decodeOk then
+		return nil, "Failed to decode response"
+	end
+
+	return decoded, nil
+end
+
 --[[ ──────────────────────────────────────────
      Analytics — internal helpers
      ────────────────────────────────────────── ]]
@@ -733,7 +783,7 @@ end
 -- so you can build pill UIs that mirror filters.categories / .subcategories on
 -- /v1/sfx/search. The API caches the response for 10 minutes.
 function AudioScape.getSfxTaxonomy(self: AudioScapeClient): (SfxTaxonomyResult?, string?)
-	return request(self, "/v1/sfx/taxonomy", {}, nil)
+	return requestGet(self, "/v1/sfx/taxonomy", {}, nil)
 end
 
 -- Find sound effects acoustically similar to a given asset.
@@ -757,14 +807,14 @@ function AudioScape.browse(self: AudioScapeClient, options: BrowseOptions): (Bro
 		return nil, "browse requires type to be one of: artist, album, genre, mood, trending"
 	end
 
-	local body: { [string]: any } = {
+	-- v0.10.0: GET so CloudFront edge-caches. POST endpoint still works on
+	-- the API for older SDK clients.
+	return requestGet(self, "/v1/browse", {
 		type = options.type,
 		name = options.name,
 		limit = options.limit,
 		offset = options.offset,
-	}
-
-	return request(self, "/v1/browse", body, options.playerId)
+	}, options.playerId)
 end
 
 -- Browse sound effects. v1 only supports type='trending' — a global,
@@ -775,14 +825,14 @@ function AudioScape.sfxBrowse(self: AudioScapeClient, options: SfxBrowseOptions)
 		return nil, "sfxBrowse requires type to be one of: trending"
 	end
 
-	local body: { [string]: any } = {
+	-- v0.10.0: GET so CloudFront edge-caches. POST endpoint still works on
+	-- the API for older SDK clients.
+	return requestGet(self, "/v1/sfx/browse", {
 		type = options.type,
 		name = options.name,
 		limit = options.limit,
 		offset = options.offset,
-	}
-
-	return request(self, "/v1/sfx/browse", body, options.playerId)
+	}, options.playerId)
 end
 
 function AudioScape.getPlaylist(self: AudioScapeClient, options: PlaylistOptions): (PlaylistResult?, string?)

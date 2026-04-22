@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.10.0
+
+### Changed
+
+- `client:browse(...)`, `client:sfxBrowse(...)`, and `client:getSfxTaxonomy()` now hit the API over **GET** instead of POST. Public method signatures, options, and return shapes are unchanged — but responses are now eligible for CloudFront edge caching, so identical calls served from a nearby edge return in ~30 ms anywhere globally instead of round-tripping to us-east-2 every time. Cache keys are per-API-key, so customers stay isolated. The API still accepts the equivalent POST for SDK <0.10.0 clients during migration; no breakage from upgrading
+- TTL at the edge is 5 min default / 1 hour ceiling. Trending lists and canonical-genre drill-downs are invalidated automatically when the underlying refresh crons run, so changes surface within seconds rather than waiting on TTL expiry
+
+### Internal
+
+- New `requestGet()` helper alongside `request()` (POST). Asymmetric naming is intentional and isolated; the two will fold into a single method-aware helper at v1.0.0
+
 ## v0.9.1
 
 ### Added
