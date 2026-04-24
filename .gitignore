@@ -1,2 +1,14 @@
 Packages/
+ServerPackages/
+DevPackages/
 *.rbxm
+*.rbxl
+*.rbxlx
+.lune/
+
+# Local-only secrets for integration tests + act --secret-file.
+# `.env.integration.example` is tracked as a template; everything else is local.
+.env.integration
+.env.integration.local
+.env.integration.*.local
+

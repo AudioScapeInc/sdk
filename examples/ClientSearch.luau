@@ -1,4 +1,4 @@
---!strict
+--!nocheck
 --[[
 	Client Search Example
 

@@ -1,0 +1,9 @@
+./CHANGELOG.md
+./LICENSE
+./README.md
+./default.project.json
+./src
+./src/AudioScapeClient.luau
+./src/AudioScapeMusicPlayer.luau
+./src/init.luau
+./wally.toml

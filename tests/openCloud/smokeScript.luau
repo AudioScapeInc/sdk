@@ -1,0 +1,279 @@
+--!strict
+-- Server-side smoke suite run inside Roblox via Open Cloud Luau Execution.
+-- This is the project's ONLY integration layer (Lune specs cover pure logic).
+-- Covers every HTTP-hitting public method against the real AudioScape API
+-- through the real Roblox engine (real HttpService, Sound, RemoteFunction,
+-- workspace:GetServerTimeNow).
+--
+-- Returns { ok, results, fixtures } where results is a list of per-step
+-- { name, ok, value?, err? }. The harness surfaces the per-step list and
+-- exits non-zero if any step failed.
+
+local HttpService = game:GetService("HttpService")
+local SerializationService = game:GetService("SerializationService")
+local ServerStorage = game:GetService("ServerStorage")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+type StepResult = {
+	name: string,
+	ok: boolean,
+	value: any?,
+	err: string?,
+}
+
+type Fixtures = {
+	music_asset_id: string?,
+	music_asset_id_with_structure: string?,
+	sfx_asset_id: string?,
+	playlist_id: string?,
+}
+
+-- Dynamic require of a deserialized ModuleScript — luau-lsp can't statically
+-- resolve the target, so we cast `require` to `any` and treat the result as
+-- `any` (the smoke tests runtime behavior, not static types).
+local args: any = ({ ... })[1]
+local sdkInstance: Instance = SerializationService:DeserializeInstancesAsync(args.BinaryInput)[1]
+sdkInstance.Parent = ServerStorage
+local AudioScape: any = (require :: any)(sdkInstance)
+
+local results: { StepResult } = {}
+-- `fn: () -> ...any` — varargs return type accepts 0-or-more returned
+-- values. Lets callbacks with no explicit return (like `instantiate`)
+-- and callbacks that return various shapes (numbers, tables, strings) all
+-- satisfy strict typing uniformly.
+local function step(name: string, fn: () -> ...any)
+	local ok, value = pcall(fn)
+	if ok then
+		table.insert(results, { name = name, ok = true, value = value })
+	else
+		table.insert(results, { name = name, ok = false, err = tostring(value) })
+	end
+end
+
+-- Construction uses the AUDIOSCAPE_KEY Roblox Secret (set on the test place).
+-- The SDK accepts Secret userdata directly, and HttpService substitutes it
+-- into the auth header at send time — the key never materialises as a string.
+local client: any = nil
+step("instantiate", function()
+	client = AudioScape.new(HttpService:GetSecret("AUDIOSCAPE_KEY"))
+	assert(client, "AudioScape.new returned nil")
+end)
+
+-- If instantiate failed, every subsequent step's `client:*` call errors on
+-- nil deref — each one's pcall catches it and records a step failure. The
+-- harness sees N step failures instead of 1 fatal, which is noisier but
+-- keeps the return shape consistent and well-typed.
+
+-- Fixtures discovered at test time. Dogfooding this rather than hardcoding
+-- ids means fixture rot is impossible: if browse/sfxBrowse ever break, the
+-- smoke fails loudly on those steps instead of mysteriously-later downstream.
+local fixtures: Fixtures = {
+	music_asset_id = nil,
+	music_asset_id_with_structure = nil,
+	sfx_asset_id = nil,
+	playlist_id = nil,
+}
+
+step("browse_trending", function()
+	local r, err = client:browse({ type = "trending", limit = 10 })
+	assert(r, "browse failed: " .. tostring(err))
+	assert(#r.tracks > 0, "trending returned 0 tracks")
+	local first = r.tracks[1]
+	assert(typeof(first.asset_id) == "string" and #first.asset_id > 0, "first track has asset_id")
+	assert(typeof(first.duration) == "number" and first.duration > 0, "first track has positive duration")
+	fixtures.music_asset_id = first.asset_id
+	return #r.tracks
+end)
+
+step("sfxBrowse_trending", function()
+	local r, err = client:sfxBrowse({ type = "trending", limit = 5 })
+	assert(r, "sfxBrowse failed: " .. tostring(err))
+	assert(r.meta.type == "trending", "meta.type echoes 'trending'; got " .. tostring(r.meta.type))
+	if #r.tracks > 0 then
+		fixtures.sfx_asset_id = r.tracks[1].asset_id
+	end
+	-- Pre-flight: invalid type rejected without HTTP
+	local rejected, badErr = client:sfxBrowse({ type = "not-a-type" })
+	assert(rejected == nil, "invalid sfxBrowse type rejected pre-flight")
+	assert(badErr and badErr:find("trending", 1, true), "err mentions trending; got: " .. tostring(badErr))
+	return #r.tracks
+end)
+
+step("search_music", function()
+	local r, err = client:search({ query = "chill", limit = 5 })
+	assert(r, "search failed: " .. tostring(err))
+	assert(typeof(r.meta.search_method) == "string", "meta.search_method is a string")
+	return { total = r.meta.total, returned = #r.tracks, method = r.meta.search_method }
+end)
+
+step("search_sfx", function()
+	local r, err = client:sfxSearch({ query = "explosion", limit = 5 })
+	assert(r, "sfxSearch failed: " .. tostring(err))
+	-- Pre-flight: missing both query and category filter rejected without HTTP
+	local rejected, badErr = client:sfxSearch({})
+	assert(rejected == nil, "empty sfxSearch options rejected pre-flight")
+	assert(
+		badErr and badErr:find("query string or filters.categories", 1, true),
+		"err mentions valid input shape; got: " .. tostring(badErr)
+	)
+	return { total = r.meta.total, returned = #r.tracks }
+end)
+
+step("similar_music", function()
+	local asset = fixtures.music_asset_id
+	assert(asset, "needs music_asset_id from browse_trending")
+	local r, err = client:similar({ asset_id = asset, limit = 5 })
+	assert(r, "similar failed: " .. tostring(err))
+	-- Pre-flight: empty asset_id rejected without HTTP
+	local rejected, badErr = client:similar({ asset_id = "" })
+	assert(rejected == nil, "empty similar asset_id rejected pre-flight")
+	assert(badErr and badErr:find("non-empty asset_id", 1, true), "err mentions non-empty; got: " .. tostring(badErr))
+	return #r.tracks
+end)
+
+step("similar_sfx", function()
+	local asset = fixtures.sfx_asset_id
+	if not asset then
+		return "skipped — no sfx fixture available"
+	end
+	local r, err = client:sfxSimilar({ asset_id = asset, limit = 5 })
+	assert(r, "sfxSimilar failed: " .. tostring(err))
+	return #r.tracks
+end)
+
+step("getSfxTaxonomy", function()
+	local r, err = client:getSfxTaxonomy()
+	assert(r, "getSfxTaxonomy failed: " .. tostring(err))
+	assert(typeof(r.meta.broader_category_count) == "number", "meta.broader_category_count is a number")
+	assert(#r.taxonomy > 0, "taxonomy is non-empty")
+	return {
+		groups = r.meta.broader_category_count,
+		categories = r.meta.category_count,
+		subcategories = r.meta.subcategory_count,
+	}
+end)
+
+-- getStructure has a ~97% coverage SLO upstream (a small fraction of tracks
+-- lag the analysis pipeline), so we walk trending until we find one with
+-- non-empty sections. Catches the issue-#3 regression (Section["end"] field).
+step("getStructure", function()
+	local pool, poolErr = client:browse({ type = "trending", limit = 10 })
+	assert(pool, "browse for structure-walker failed: " .. tostring(poolErr))
+	local pickedAsset: string? = nil
+	local pickedResult: any = nil
+	for _, track in pool.tracks do
+		local r, err = client:getStructure({ asset_id = track.asset_id })
+		if r and not err and #r.sections > 0 then
+			pickedAsset = track.asset_id
+			pickedResult = r
+			break
+		end
+	end
+	assert(pickedAsset and pickedResult, "no trending track had non-empty sections within the walk window")
+	fixtures.music_asset_id_with_structure = pickedAsset
+
+	local first = pickedResult.sections[1]
+	assert(typeof(first.start) == "number", "section.start is a number")
+	-- Issue-#3 regression: the API field is `end` and the Luau type quotes it as
+	-- ["end"]. Both wire-decode and type alignment must work for this to pass.
+	assert(typeof(first["end"]) == "number", 'section["end"] is a number (issue #3)')
+	assert(first["end"] > first.start, "section end > start")
+	return { asset_id = pickedAsset, sections = #pickedResult.sections }
+end)
+
+step("sectionAtTime", function()
+	local asset = fixtures.music_asset_id_with_structure
+	assert(asset, "needs a structured track")
+	local r, err = client:getStructure({ asset_id = asset })
+	assert(r and r.sections[1], "re-fetch for sectionAtTime failed: " .. tostring(err))
+	local probe = r.sections[1].start + 0.1
+	local section, sErr = client:sectionAtTime(asset, probe)
+	assert(section, "sectionAtTime returned nil: " .. tostring(sErr))
+	return "ok"
+end)
+
+step("listPlaylists", function()
+	local r, err = client:listPlaylists()
+	assert(r, "listPlaylists failed: " .. tostring(err))
+	assert(typeof(r.meta.total) == "number" and r.meta.total >= 0, "meta.total is a number")
+	if #r.playlists > 0 then
+		fixtures.playlist_id = r.playlists[1].id
+	end
+	return { total = r.meta.total, returned = #r.playlists }
+end)
+
+step("getPlaylist", function()
+	local id = fixtures.playlist_id
+	if not id then
+		return "skipped — no playlists in this universe"
+	end
+	local r, err = client:getPlaylist({ playlist_id = id })
+	assert(r, "getPlaylist failed: " .. tostring(err))
+	assert(r.playlist.id == id, "returned id matches requested")
+	assert(#r.tracks == r.playlist.track_count, "tracks length matches track_count")
+	return { id = r.playlist.id, name = r.playlist.name, tracks = #r.tracks }
+end)
+
+-- Analytics: enqueue one event per public track method, force-flush, assert
+-- drain. Exercises workspace:GetServerTimeNow under real engine (catches the
+-- class of bug fixed in 64ad673 where the Lune mock returned os.clock()).
+-- Events tag with game.GameId/PlaceId — which are the real test universe/place
+-- here, so they land in the test universe's analytics (expected + harmless).
+step("analytics_flush", function()
+	local asset = fixtures.music_asset_id
+	assert(asset, "needs music_asset_id from browse_trending")
+	local player = "smoke-openCloud"
+	client:trackPlay(asset, player, 0)
+	client:trackStop(asset, player, 0)
+	client:trackSkip(asset, player, 0)
+	client:trackVote(asset, "up", player)
+	client:trackFavorite(asset, player)
+	client:trackUnfavorite(asset, player)
+	client:trackAddToQueue(asset, player)
+	client:trackSearchClick(asset, player, { query = "smoke test" })
+	client:trackCustom("smoke_openCloud_ping", asset, player, { source = "tests/openCloud/smoke" })
+	assert(#client._analyticsBuffer == 9, "expected 9 events queued; got " .. #client._analyticsBuffer)
+	client:flushAnalytics()
+	assert(#client._analyticsBuffer == 0, "flushAnalytics did not drain buffer")
+	return "9 events posted"
+end)
+
+-- createPlayer instantiates a real Sound and connects Sound.Ended. Not
+-- testable in Lune (the mock can't model Sound events faithfully).
+step("createPlayer", function()
+	local player = client:createPlayer()
+	assert(player, "createPlayer returned nil")
+	assert(typeof(player.playTrack) == "function", "player.playTrack is not a function")
+	return "ok"
+end)
+
+-- enableClientAccess creates ReplicatedStorage.AudioScapeRemotes (Folder)
+-- with one RemoteFunction per public method. Lune doesn't model
+-- RemoteFunction at all, so this is net new coverage.
+step("enableClientAccess", function()
+	client:enableClientAccess()
+	local folder = ReplicatedStorage:FindFirstChild("AudioScapeRemotes")
+	assert(folder and folder:IsA("Folder"), "AudioScapeRemotes Folder not created")
+	local remotes = {}
+	for _, child in folder:GetChildren() do
+		if child:IsA("RemoteFunction") then
+			table.insert(remotes, child.Name)
+		end
+	end
+	assert(#remotes > 0, "no RemoteFunctions in AudioScapeRemotes")
+	return remotes
+end)
+
+local allOk = true
+for _, r in results do
+	if not r.ok then
+		allOk = false
+		break
+	end
+end
+
+return {
+	ok = allOk,
+	results = results,
+	fixtures = fixtures,
+}

@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.10.1
+
+### Changed
+
+- `client:similar(...)` and `client:sfxSimilar(...)` now hit the API over **GET** instead of POST — same migration as `browse`/`sfxBrowse`/`getSfxTaxonomy` in v0.10.0, same caching rationale (CloudFront edge cache, ~30 ms warm-cache reads). Public method signatures, options, and return shapes are unchanged. The API still accepts the equivalent POST for older SDK clients during migration; no breakage from upgrading. The internal `buildQuery()` helper now JSON-encodes table values (e.g. `filters`) into a single querystring parameter
+
+### Fixed
+
+- `Section.end` field annotation now uses `["end"]` quoting — `end` is a reserved Luau keyword, and the unquoted form prevented `require()` of the SDK from parsing on any Luau analyzer or runtime. Affected every release from `v0.7.0` (when `getStructure` shipped) through `v0.10.0`. Consumers reading the field must use `section["end"]` (the API wire format already returns `end`, so this matches what's on the response). Reported in #3 by Sean (Rhythm Run / OffGridDude). Thanks Sean!
+- Tightened a few pre-existing type-narrowing holes in `AudioScapeMusicPlayer` and `AudioScape.createPlayer` that the new analyzer surfaced — no behavior change
+
+### Internal
+
+- New QA toolchain: StyLua (format), selene (lint), `luau-lsp analyze` (parse + type check), Lune unit tests, and an Open Cloud Luau Execution smoke suite — all wired into a GitHub Actions CI job that runs on every PR. The SDK module is now `require`-checked end-to-end on every push, so the issue #3 class of bug can't ship again
+- Rokit (`rokit.toml`) pins every tool version so contributors get the same toolchain as CI
+- 25 checks total: 10 Lune unit specs + 15 Open Cloud smoke steps. The smoke suite runs the SDK *inside* the real Roblox engine via Open Cloud Luau Execution — every HTTP-hitting public method plus engine-only paths (`Sound.Ended` connect, `RemoteFunction` tree, real `workspace:GetServerTimeNow`) exercised against the live API in ~5s. Dogfooded fixtures (IDs discovered at test time via the SDK's own browse/sfxBrowse endpoints) mean no env-var maintenance for assets. AudioScape key is retrieved via `HttpService:GetSecret` — never materialises as a plain string in source
+- CI smoke job is gated behind a GitHub environment (`openCloud-smoke`) with required-reviewer protection — a maintainer must approve each run before the Roblox/AudioScape secrets are exposed to the runner
+- See `CONTRIBUTING.md` for local setup + the manual Studio checklist for audio playback and BindToClose shutdown flush (Luau Execution doesn't fire BindToClose callbacks)
+
 ## v0.10.0
 
 ### Changed

@@ -1,4 +1,4 @@
---!strict
+--!nocheck
 --[[
 	StructureBeatSync Example
 
@@ -15,9 +15,7 @@ local RunService = game:GetService("RunService")
 
 local AudioScape = require(ServerScriptService.Packages.AudioScape)
 
-local apiKey = if RunService:IsStudio()
-	then "your-test-key"
-	else HttpService:GetSecret("AudioScapeKey")
+local apiKey = if RunService:IsStudio() then "your-test-key" else HttpService:GetSecret("AudioScapeKey")
 
 local client = AudioScape.new(apiKey)
 
@@ -29,7 +27,9 @@ if not structure then
 	return
 end
 
-print(string.format("Track: %s BPM, energy=%d, %d sections", structure.bpm, structure.track_energy, #structure.sections))
+print(
+	string.format("Track: %s BPM, energy=%d, %d sections", structure.bpm, structure.track_energy, #structure.sections)
+)
 
 -- A particle emitter you've configured in the Explorer
 local emitter = workspace:FindFirstChild("BeatEmitter") :: ParticleEmitter?

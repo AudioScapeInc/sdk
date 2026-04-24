@@ -1,0 +1,10 @@
+# Rokit toolchain manifest. After cloning, install Rokit
+# (https://github.com/rojo-rbx/rokit) and run `rokit install`.
+
+[tools]
+lune = "lune-org/lune@0.10.4"
+luau-lsp = "JohnnyMorganz/luau-lsp@1.66.0"
+stylua = "JohnnyMorganz/StyLua@2.4.1"
+selene = "Kampfkarren/selene@0.30.1"
+wally = "UpliftGames/wally@0.3.2"
+rojo = "rojo-rbx/rojo@7.5.1"
