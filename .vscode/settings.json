@@ -1,0 +1,17 @@
+{
+	"luau-lsp.types.definitionFiles": ["globalTypes.d.luau"],
+	"luau-lsp.types.roblox": true,
+	"luau-lsp.sourcemap.enabled": true,
+	"luau-lsp.sourcemap.autogenerate": true,
+	"luau-lsp.completion.imports.enabled": true,
+	// Analyze every workspace file upfront instead of only opened ones, so the
+	// Problems pane reflects the full project state rather than lazy-loading
+	// per buffer.
+	"luau-lsp.diagnostics.workspace": true,
+	// .lune/ holds Lune's per-script bytecode cache — never our source.
+	"luau-lsp.ignoreGlobs": ["**/.lune/**"],
+	"[luau]": {
+		"editor.defaultFormatter": "JohnnyMorganz.stylua"
+	},
+	"editor.formatOnSave": true
+}

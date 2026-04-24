@@ -241,7 +241,10 @@ export type BeatGrid = {
 
 export type Section = {
 	start: number,
-	end: number,
+	-- `end` is a reserved Luau keyword; quote it so the type parses. The
+	-- AudioScape API returns the field as `end` (matching its snake_case
+	-- shape), so consumers must read it via section["end"] as well.
+	["end"]: number,
 	label: string?,
 	energy: number?,
 	bar_start: number?,
@@ -324,20 +327,34 @@ type AnalyticsEvent = {
 local AudioScape = {}
 AudioScape.__index = AudioScape
 
-type AudioScapeClient = typeof(setmetatable({} :: {
-	_apiKey: any,
-	_universeId: string,
-	_placeId: string,
-	_analyticsEnabled: boolean,
-	_analyticsBatchInterval: number,
-	_analyticsMaxBatchSize: number,
-	_analyticsMaxQueueSize: number,
-	_analyticsBuffer: { AnalyticsEvent },
-	_analyticsRunning: boolean,
-	_analyticsBackoff: number,
-	_analyticsConsecutiveFailures: number,
-	_structureCache: { [string]: StructureResult },
-}, AudioScape))
+type AudioScapeClient = typeof(setmetatable(
+	{} :: {
+		_apiKey: any,
+		_universeId: string,
+		_placeId: string,
+		_analyticsEnabled: boolean,
+		_analyticsBatchInterval: number,
+		_analyticsMaxBatchSize: number,
+		_analyticsMaxQueueSize: number,
+		_analyticsBuffer: { AnalyticsEvent },
+		_analyticsRunning: boolean,
+		_analyticsBackoff: number,
+		_analyticsConsecutiveFailures: number,
+		_structureCache: { [string]: StructureResult },
+	},
+	AudioScape
+))
+
+-- Compute the next analytics-flush wait given how many consecutive failures
+-- have happened. Doubles each failure, capped at 300s. `failures = 0` returns
+-- the steady-state interval.
+local ANALYTICS_BACKOFF_CAP = 300
+local function computeAnalyticsBackoff(consecutiveFailures: number, batchInterval: number): number
+	if consecutiveFailures <= 0 then
+		return batchInterval
+	end
+	return math.min(batchInterval * (2 ^ consecutiveFailures), ANALYTICS_BACKOFF_CAP)
+end
 
 local function formatError(statusCode: number, body: string): string
 	if statusCode == 401 then
@@ -393,11 +410,20 @@ local function request(self: AudioScapeClient, path: string, body: { [string]: a
 end
 
 -- Skips nil values so callers don't need to filter their options table.
+-- Tables are JSON-encoded then URL-encoded — the API expects structured
+-- `filters` to come through as a single querystring parameter holding the
+-- JSON-encoded value (per the GET /v1/similar + /v1/sfx/similar contract).
 local function buildQuery(params: { [string]: any }): string
 	local parts: { string } = {}
 	for key, value in pairs(params) do
 		if value ~= nil then
-			table.insert(parts, key .. "=" .. HttpService:UrlEncode(tostring(value)))
+			local encoded
+			if type(value) == "table" then
+				encoded = HttpService:UrlEncode(HttpService:JSONEncode(value))
+			else
+				encoded = HttpService:UrlEncode(tostring(value))
+			end
+			table.insert(parts, key .. "=" .. encoded)
 		end
 	end
 	if #parts == 0 then
@@ -406,11 +432,16 @@ local function buildQuery(params: { [string]: any }): string
 	return "?" .. table.concat(parts, "&")
 end
 
--- v0.10.0: GET sibling of request() for endpoints CloudFront edge-caches
--- (browse, sfxBrowse, sfxTaxonomy). API still accepts the equivalent POST
--- for older SDK clients; flagged as a v1.0.0 cleanup candidate to fold both
--- into one method-aware helper.
-local function requestGet(self: AudioScapeClient, path: string, query: { [string]: any }, playerId: number?): (any, string?)
+-- GET sibling of request() for endpoints CloudFront edge-caches
+-- (v0.10.0: browse, sfxBrowse, sfxTaxonomy; v0.10.1: similar, sfxSimilar).
+-- API still accepts the equivalent POST for older SDK clients; flagged as a
+-- v1.0.0 cleanup candidate to fold both into one method-aware helper.
+local function requestGet(
+	self: AudioScapeClient,
+	path: string,
+	query: { [string]: any },
+	playerId: number?
+): (any, string?)
 	local headers: { [string]: any } = {
 		["x-api-key"] = self._apiKey,
 		["X-Universe-Id"] = self._universeId,
@@ -461,11 +492,13 @@ local function flushAnalyticsBuffer(self: AudioScapeClient): boolean
 		return true
 	end
 
-	-- Drain up to maxBatchSize events from the buffer
+	-- Drain up to maxBatchSize events from the buffer. table.remove returns
+	-- T? in strict mode (the table could be empty); we know it isn't because
+	-- count <= #buffer, so cast to satisfy the analyzer.
 	local batch: { AnalyticsEvent } = {}
 	local count = math.min(#self._analyticsBuffer, self._analyticsMaxBatchSize)
 	for _ = 1, count do
-		table.insert(batch, table.remove(self._analyticsBuffer, 1))
+		table.insert(batch, table.remove(self._analyticsBuffer, 1) :: AnalyticsEvent)
 	end
 
 	local jsonBody = HttpService:JSONEncode({ events = batch })
@@ -531,15 +564,11 @@ local function startAnalyticsLoop(self: AudioScapeClient)
 
 				local flushed = ok and result == true
 				if flushed then
-					self._analyticsBackoff = self._analyticsBatchInterval
 					self._analyticsConsecutiveFailures = 0
 				else
 					self._analyticsConsecutiveFailures += 1
-					self._analyticsBackoff = math.min(
-						self._analyticsBatchInterval * (2 ^ self._analyticsConsecutiveFailures),
-						300
-					)
 				end
+				self._analyticsBackoff = computeAnalyticsBackoff(self._analyticsConsecutiveFailures, self._analyticsBatchInterval)
 			end
 		end
 	end)
@@ -702,7 +731,12 @@ function AudioScape.trackAddToQueue(self: AudioScapeClient, assetId: string, pla
 end
 
 -- Track a search result click
-function AudioScape.trackSearchClick(self: AudioScapeClient, assetId: string, playerId: (number | string)?, metadata: { [string]: any }?)
+function AudioScape.trackSearchClick(
+	self: AudioScapeClient,
+	assetId: string,
+	playerId: (number | string)?,
+	metadata: { [string]: any }?
+)
 	enqueueEvent(self, {
 		type = "search_click",
 		asset_id = assetId,
@@ -712,7 +746,13 @@ function AudioScape.trackSearchClick(self: AudioScapeClient, assetId: string, pl
 end
 
 -- Track a custom event (any string type, flexible schema)
-function AudioScape.trackCustom(self: AudioScapeClient, eventType: string, assetId: string?, playerId: (number | string)?, metadata: { [string]: any }?)
+function AudioScape.trackCustom(
+	self: AudioScapeClient,
+	eventType: string,
+	assetId: string?,
+	playerId: (number | string)?,
+	metadata: { [string]: any }?
+)
 	assert(type(eventType) == "string" and #eventType > 0, "custom event type must be a non-empty string")
 	enqueueEvent(self, {
 		type = eventType,
@@ -746,14 +786,14 @@ function AudioScape.similar(self: AudioScapeClient, options: SimilarOptions): (S
 		return nil, "similar requires a non-empty asset_id string"
 	end
 
-	local body: { [string]: any } = {
+	-- GET so CloudFront edge-caches. API still accepts the equivalent POST
+	-- for older SDK clients during migration.
+	return requestGet(self, "/v1/similar", {
 		asset_id = options.asset_id,
 		limit = options.limit,
 		offset = options.offset,
 		filters = options.filters,
-	}
-
-	return request(self, "/v1/similar", body, options.playerId)
+	}, options.playerId)
 end
 
 -- Search the SFX catalog. Pass `query` for free-text search, or pass
@@ -762,9 +802,7 @@ end
 -- without needing to know the right search terms.
 function AudioScape.sfxSearch(self: AudioScapeClient, options: SfxSearchOptions): (SfxSearchResult?, string?)
 	local hasQuery = type(options.query) == "string" and #options.query > 0
-	local hasCategory = options.filters
-		and type(options.filters.categories) == "table"
-		and #options.filters.categories > 0
+	local hasCategory = options.filters and type(options.filters.categories) == "table" and #options.filters.categories > 0
 	if not hasQuery and not hasCategory then
 		return nil, "sfxSearch requires either a query string or filters.categories"
 	end
@@ -792,17 +830,20 @@ function AudioScape.sfxSimilar(self: AudioScapeClient, options: SfxSimilarOption
 		return nil, "sfxSimilar requires a non-empty asset_id string"
 	end
 
-	local body: { [string]: any } = {
+	-- GET so CloudFront edge-caches. API still accepts the equivalent POST
+	-- for older SDK clients during migration.
+	return requestGet(self, "/v1/sfx/similar", {
 		asset_id = options.asset_id,
 		limit = options.limit,
 		offset = options.offset,
 		filters = options.filters,
-	}
-
-	return request(self, "/v1/sfx/similar", body, options.playerId)
+	}, options.playerId)
 end
 
-function AudioScape.browse(self: AudioScapeClient, options: BrowseOptions): (BrowseListResult | BrowseTracksResult | nil, string?)
+function AudioScape.browse(
+	self: AudioScapeClient,
+	options: BrowseOptions
+): (BrowseListResult | BrowseTracksResult | nil, string?)
 	if type(options.type) ~= "string" or not VALID_BROWSE_TYPES[options.type] then
 		return nil, "browse requires type to be one of: artist, album, genre, mood, trending"
 	end
@@ -936,7 +977,12 @@ function AudioScape.beatAtTime(self: AudioScapeClient, asset_id: string, t: numb
 end
 
 -- Find the section (or phrase) containing time `t`. `level` defaults to "section".
-function AudioScape.sectionAtTime(self: AudioScapeClient, asset_id: string, t: number, level: string?): (Section?, string?)
+function AudioScape.sectionAtTime(
+	self: AudioScapeClient,
+	asset_id: string,
+	t: number,
+	level: string?
+): (Section?, string?)
 	local structure, err = self:getStructure({ asset_id = asset_id })
 	if not structure then
 		return nil, err
@@ -944,7 +990,7 @@ function AudioScape.sectionAtTime(self: AudioScapeClient, asset_id: string, t: n
 
 	local list = if level == "phrase" then structure.phrases else structure.sections
 	for _, section in ipairs(list) do
-		if t >= section.start and t < section.end then
+		if t >= section.start and t < section["end"] then
 			return section, nil
 		end
 	end
@@ -959,8 +1005,14 @@ end
 export type PlayerOptions = AudioScapeMusicPlayer.PlayerOptions
 
 -- Create an AudioScapeMusicPlayer that manages audio playback and auto-tracks analytics.
-function AudioScape.createPlayer(self: AudioScapeClient, options: PlayerOptions?): AudioScapeMusicPlayer.MusicPlayerInstance
-	return AudioScapeMusicPlayer.new(self, options)
+-- AudioScapeClient structurally satisfies AudioScapeMusicPlayer's AnalyticsClient
+-- duck-type (trackPlay/trackStop/trackSkip), but the analyzer can't see the
+-- structural match across modules — cast to any here, exercised by the player tests.
+function AudioScape.createPlayer(
+	self: AudioScapeClient,
+	options: PlayerOptions?
+): AudioScapeMusicPlayer.MusicPlayerInstance
+	return AudioScapeMusicPlayer.new(self :: any, options)
 end
 
 --[[ ──────────────────────────────────────────
@@ -1145,6 +1197,20 @@ function AudioScape.enableClientAccess(self: AudioScapeClient)
 	end)
 
 	folder.Parent = ReplicatedStorage
+end
+
+-- Test-only export. Gated on _G.__AUDIOSCAPE_TEST so production callers
+-- never see __internal. The Lune harness sets the flag before requiring
+-- the module so its specs can reach pure helpers without spinning the
+-- full client.
+-- selene: allow(global_usage)
+if _G.__AUDIOSCAPE_TEST then
+	-- selene: allow(global_usage)
+	(AudioScape :: any).__internal = {
+		computeAnalyticsBackoff = computeAnalyticsBackoff,
+		formatError = formatError,
+		buildQuery = buildQuery,
+	}
 end
 
 return AudioScape

@@ -44,29 +44,32 @@ type AnalyticsClient = {
 local AudioScapeMusicPlayer = {}
 AudioScapeMusicPlayer.__index = AudioScapeMusicPlayer
 
-export type MusicPlayerInstance = typeof(setmetatable({} :: {
-	_client: AnalyticsClient,
-	_parent: Instance,
-	_volume: number,
-	_playerId: number?,
-	_queue: { Track },
-	_index: number,
-	_sound: Sound?,
-	_playing: boolean,
-	_advancing: boolean,
-	_startedAt: number,
-	_endedConnection: RBXScriptConnection?,
+export type MusicPlayerInstance = typeof(setmetatable(
+	{} :: {
+		_client: AnalyticsClient,
+		_parent: Instance,
+		_volume: number,
+		_playerId: number?,
+		_queue: { Track },
+		_index: number,
+		_sound: Sound?,
+		_playing: boolean,
+		_advancing: boolean,
+		_startedAt: number,
+		_endedConnection: RBXScriptConnection?,
 
-	NowPlaying: Track?,
-	IsPlaying: boolean,
-	Queue: { Track },
+		NowPlaying: Track?,
+		IsPlaying: boolean,
+		Queue: { Track },
 
-	OnTrackChanged: ((track: Track?) -> ())?,
-	OnQueueFinished: (() -> ())?,
-}, AudioScapeMusicPlayer))
+		OnTrackChanged: ((track: Track?) -> ())?,
+		OnQueueFinished: (() -> ())?,
+	},
+	AudioScapeMusicPlayer
+))
 
 function AudioScapeMusicPlayer.new(client: AnalyticsClient, options: PlayerOptions?): MusicPlayerInstance
-	local opts = options or {}
+	local opts: PlayerOptions = options or {}
 
 	local self = setmetatable({
 		_client = client,

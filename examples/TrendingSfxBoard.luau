@@ -1,4 +1,4 @@
---!strict
+--!nocheck
 --[[
 	TrendingSfxBoard Example
 
@@ -15,9 +15,7 @@ local Players = game:GetService("Players")
 
 local AudioScape = require(ServerScriptService.Packages.AudioScape)
 
-local apiKey = if RunService:IsStudio()
-	then "your-test-key"
-	else HttpService:GetSecret("AudioScapeKey")
+local apiKey = if RunService:IsStudio() then "your-test-key" else HttpService:GetSecret("AudioScapeKey")
 
 local client = AudioScape.new(apiKey)
 

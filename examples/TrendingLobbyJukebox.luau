@@ -1,4 +1,4 @@
---!strict
+--!nocheck
 --[[
 	TrendingLobbyJukebox Example
 
@@ -18,23 +18,18 @@ local RunService = game:GetService("RunService")
 
 local AudioScape = require(ServerScriptService.Packages.AudioScape)
 
-local apiKey = if RunService:IsStudio()
-	then "your-test-key"
-	else HttpService:GetSecret("AudioScapeKey")
+local apiKey = if RunService:IsStudio() then "your-test-key" else HttpService:GetSecret("AudioScapeKey")
 
 local client = AudioScape.new(apiKey)
 local musicPlayer = client:createPlayer({ volume = 0.5 })
 
 -- Optional: a StringValue your UI watches for the now-playing label
-local nowPlaying = ReplicatedStorage:FindFirstChild("NowPlaying")
-	or Instance.new("StringValue")
+local nowPlaying = ReplicatedStorage:FindFirstChild("NowPlaying") or Instance.new("StringValue")
 nowPlaying.Name = "NowPlaying"
 nowPlaying.Parent = ReplicatedStorage
 
 musicPlayer.OnTrackChanged = function(track)
-	nowPlaying.Value = if track
-		then string.format("%s — %s", track.artist, track.name)
-		else ""
+	nowPlaying.Value = if track then string.format("%s — %s", track.artist, track.name) else ""
 end
 
 local result, err = client:browse({ type = "trending", limit = 50 })

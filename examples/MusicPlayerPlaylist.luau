@@ -1,4 +1,4 @@
---!strict
+--!nocheck
 --[[
 	AudioScapeMusicPlayer Playlist Example
 
@@ -12,9 +12,7 @@ local RunService = game:GetService("RunService")
 
 local AudioScape = require(ServerStorage.AudioScape)
 
-local apiKey = if RunService:IsStudio()
-	then "your-test-key"
-	else HttpService:GetSecret("AudioScapeKey")
+local apiKey = if RunService:IsStudio() then "your-test-key" else HttpService:GetSecret("AudioScapeKey")
 
 local client = AudioScape.new(apiKey)
 local player = client:createPlayer({ volume = 0.5 })

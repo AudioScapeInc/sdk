@@ -1,0 +1,15 @@
+{
+  "languageMode": "strict",
+  "lintErrors": true,
+  "typeErrors": true,
+  "globals": [
+    "game",
+    "script",
+    "workspace",
+    "task",
+    "_G"
+  ],
+  "aliases": {
+    "lune": "~/.lune/.typedefs/0.10.4/"
+  }
+}

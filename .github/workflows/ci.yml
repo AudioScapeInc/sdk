@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+jobs:
+  qa:
+    name: lint + analyze + test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rokit and pinned tools
+        uses: CompeyDev/setup-rokit@v0.1.2
+
+      - name: Generate Rojo sourcemap
+        run: rojo sourcemap default.project.json --output sourcemap.json
+
+      - name: stylua --check
+        run: stylua --check src/ tests/ examples/
+
+      - name: selene
+        run: selene src/ tests/
+
+      - name: Install Lune type definitions
+        run: lune setup
+
+      - name: luau-lsp analyze
+        run: luau-lsp analyze --sourcemap=sourcemap.json --definitions=globalTypes.d.luau --base-luaurc=.luaurc --platform=roblox src/ tests/ examples/
+
+      - name: lune unit tests
+        run: lune run tests/run.luau
+
+      # Verify the published package contains exactly the expected files.
+      # Catches accidental shipping of tests/, dev tooling, or secrets at
+      # PR time rather than after `wally publish`. LC_ALL=C makes the sort
+      # order stable across macOS (case-folded) and Linux (strict ASCII).
+      - name: wally package snapshot
+        run: diff <(wally package --list 2>/dev/null | LC_ALL=C sort) tests/wally-package.expected.txt
+
+  smoke:
+    name: openCloud smoke
+    runs-on: ubuntu-latest
+    needs: qa
+    timeout-minutes: 10
+    # Skip the job entirely on forked PRs: secrets are stripped there, so
+    # even if the environment gate were bypassed the run would fail. The
+    # expression below evaluates true for pushes and for PRs whose head
+    # branch lives in this repo (not a fork).
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    # Environment gate: secrets are env-scoped, and the environment has
+    # required-reviewer protection. The job pauses awaiting maintainer
+    # approval before it runs — this is the defense against a compromised
+    # collaborator committing a malicious smokeScript that exfiltrates the
+    # AUDIOSCAPE_KEY Secret or ROBLOX_API_KEY.
+    environment: openCloud-smoke
+    env:
+      ROBLOX_API_KEY: ${{ secrets.ROBLOX_API_KEY }}
+      ROBLOX_TEST_UNIVERSE_ID: ${{ secrets.ROBLOX_TEST_UNIVERSE_ID }}
+      ROBLOX_TEST_PLACE_ID: ${{ secrets.ROBLOX_TEST_PLACE_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rokit and pinned tools
+        uses: CompeyDev/setup-rokit@v0.1.2
+
+      - name: Generate Rojo sourcemap
+        run: rojo sourcemap default.project.json --output sourcemap.json
+
+      # Builds the SDK as an .rbxm, submits it to the test place via the
+      # Luau Execution API, runs the full integration suite inside the
+      # real Roblox engine.
+      - name: openCloud smoke
+        run: lune run tests/openCloud/smoke.luau

@@ -1,0 +1,45 @@
+{
+	"version": "2.0.0",
+	// Top-level options apply to every task.
+	//
+	// shell: pin to /bin/bash regardless of the user's interactive shell. Our
+	// `command` strings use bash-only syntax (`set -a`, POSIX sourcing,
+	// `KEY=value` env files), and `.env.integration` is in bash dotenv format —
+	// fish/zsh would error on the same input.
+	//
+	// env.PATH: prepend $HOME/.rokit/bin so rokit-managed tools (lune, luau-lsp,
+	// stylua, selene, wally, rojo) are callable even when VS Code's task shell
+	// doesn't inherit the user's interactive PATH.
+	"options": {
+		"shell": {
+			"executable": "/bin/bash",
+			"args": ["-c"]
+		},
+		"env": {
+			"PATH": "${env:HOME}/.rokit/bin:${env:PATH}"
+		}
+	},
+	"tasks": [
+		{
+			"label": "static analysis: stylua + selene + luau-lsp",
+			"type": "shell",
+			"command": "stylua --check src/ tests/ examples/ && selene src/ tests/ && rojo sourcemap default.project.json --output sourcemap.json && luau-lsp analyze --sourcemap=sourcemap.json --definitions=globalTypes.d.luau --base-luaurc=.luaurc --platform=roblox src/ tests/ examples/",
+			"problemMatcher": [],
+			"group": { "kind": "build", "isDefault": true }
+		},
+		{
+			"label": "unit tests (lune)",
+			"type": "shell",
+			"command": "lune run tests/run.luau",
+			"problemMatcher": [],
+			"group": { "kind": "test", "isDefault": true }
+		},
+		{
+			"label": "act: full CI workflow with .env.integration secrets",
+			"type": "shell",
+			"command": "act --secret-file .env.integration",
+			"problemMatcher": [],
+			"detail": "Runs the complete workflow locally, including the openCloud smoke job (requires .env.integration with ROBLOX_API_KEY + ROBLOX_TEST_*). `act` without -j runs every job including `smoke`, which `needs: qa`."
+		}
+	]
+}
