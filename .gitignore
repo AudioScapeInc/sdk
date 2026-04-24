@@ -1,6 +1,10 @@
 Packages/
 ServerPackages/
 DevPackages/
+
+# `*.rbxm` catches both Wally's package outputs and release artifacts
+# built via `rojo build` (the release.yml workflow produces these in CI
+# on tag push — they're attached to GitHub releases, not checked in).
 *.rbxm
 *.rbxl
 *.rbxlx

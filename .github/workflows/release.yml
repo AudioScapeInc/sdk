@@ -1,0 +1,56 @@
+name: Release
+
+# Fires when a `vX.Y.Z` tag is pushed. Builds the .rbxm, extracts the
+# matching section from CHANGELOG.md as release notes, publishes a
+# GitHub release with the .rbxm attached.
+#
+# Workflow: after merging the release PR to master, run locally:
+#   git tag -a vX.Y.Z -m "..." && git push origin vX.Y.Z
+# Then `wally publish` separately (needs your Wally login, can't be
+# automated without exposing credentials to CI).
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    name: build + publish
+    runs-on: ubuntu-latest
+    # GITHUB_TOKEN needs write access to Contents to create a release.
+    permissions:
+      contents: write
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rokit and pinned tools
+        uses: CompeyDev/setup-rokit@v0.1.2
+
+      - name: Build .rbxm
+        run: rojo build default.project.json -o "AudioScape-${GITHUB_REF_NAME}.rbxm"
+
+      # Extract the section for this tag from CHANGELOG.md. Matches `## vX.Y.Z`
+      # exactly and stops at the next `## v...` heading. If CHANGELOG has no
+      # entry for the tag, release-notes.md is empty and the release ships
+      # with no body — edit post-publish via `gh release edit`.
+      - name: Extract release notes
+        run: |
+          awk -v v="## ${GITHUB_REF_NAME}" '
+            $0 == v { flag = 1; next }
+            /^## v/ { flag = 0 }
+            flag
+          ' CHANGELOG.md > release-notes.md
+          echo "--- release-notes.md (first 20 lines) ---"
+          head -20 release-notes.md
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "${GITHUB_REF_NAME}" \
+            --notes-file release-notes.md \
+            --verify-tag \
+            "AudioScape-${GITHUB_REF_NAME}.rbxm"
