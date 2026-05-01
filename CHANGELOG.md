@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.11.0
+
+### Added
+
+- **Polymorphic input on `client:similar`, `client:sfxSimilar`, `client:getStructure`.** Each method now accepts an asset_id string (`"1234"` or `"rbxassetid://1234"`), a Track / PlaylistTrack / SfxTrack table from a previous response, a `Sound` instance (peels `SoundId`), or an `AudioPlayer` instance (peels `Asset`). The legacy options-table form (`{ asset_id, limit, ... }`) keeps working unchanged. New optional second positional arg `extras` carries `limit` / `offset` / `filters` / `playerId` for the non-table forms (`client:similar(sound, { limit = 10 })`). Resolves the "I just got a track from getPlaylist, why am I parsing it back into asset_id" papercut. Companion `AudioScapeClient` (LocalScript-side) gets the same treatment — wire format unchanged, resolution happens client-side.
+- `tests/install-snippet.spec.luau` Lune doctest — reads README.md and wally.toml at test time and asserts (1) the install snippet uses `[server-dependencies]`, not `[dependencies]`, and (2) the version pin in the README matches `wally.toml`. Catches the install-bug class going forward without needing a Wally consumer-fixture (Wally 0.3.2 has no path-dep support).
+
+### Fixed
+
+- README install snippet now correctly uses `[server-dependencies]`. The SDK declares `realm = "server"`; Wally's `Realm::is_dependency_valid` rejects server-realm packages placed under `[dependencies]` (the shared section). Consumers following the old README copy hit an install-time error. Reported by Juriaan (Velibor). Thanks Juriaan!
+
+### Notes
+
+- `audioPlayer.Asset` is the auto-resolved field on AudioPlayer in v0.11.0 (the legacy ContentId, still widely used). The newer `.AudioContent` is a `Content` userdata and isn't auto-unwrapped — pass `audioPlayer.AudioContent.Uri` yourself for that path. Will revisit in a future release if customers ask.
+
 ## v0.10.1
 
 ### Changed

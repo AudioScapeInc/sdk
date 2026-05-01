@@ -1,6 +1,6 @@
 [package]
 name = "this-fifo/audioscape-sdk"
-version = "0.10.1"
+version = "0.11.0"
 registry = "https://github.com/UpliftGames/wally-index"
 realm = "server"
 license = "MIT"
