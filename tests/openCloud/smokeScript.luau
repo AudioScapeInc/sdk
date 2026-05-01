@@ -124,10 +124,15 @@ step("similar_music", function()
 	assert(asset, "needs music_asset_id from browse_trending")
 	local r, err = client:similar({ asset_id = asset, limit = 5 })
 	assert(r, "similar failed: " .. tostring(err))
-	-- Pre-flight: empty asset_id rejected without HTTP
+	-- Pre-flight: empty asset_id rejected without HTTP. Error message mentions
+	-- the four accepted shapes (string / table / Sound / AudioPlayer) since
+	-- v0.11.0's polymorphic input.
 	local rejected, badErr = client:similar({ asset_id = "" })
 	assert(rejected == nil, "empty similar asset_id rejected pre-flight")
-	assert(badErr and badErr:find("non-empty asset_id", 1, true), "err mentions non-empty; got: " .. tostring(badErr))
+	assert(
+		badErr and badErr:find("track table, a Sound, or an AudioPlayer", 1, true),
+		"err mentions four accepted shapes; got: " .. tostring(badErr)
+	)
 	return #r.tracks
 end)
 
@@ -190,6 +195,47 @@ step("sectionAtTime", function()
 	local section, sErr = client:sectionAtTime(asset, probe)
 	assert(section, "sectionAtTime returned nil: " .. tostring(sErr))
 	return "ok"
+end)
+
+-- v0.11.0 polymorphic input: pass a real Sound instance to getStructure.
+-- Exercises the typeof == "Instance" arm of resolveAssetId — Lune mocks
+-- can't reach this path because mockGame's Instance.new returns a table.
+step("getStructure_from_sound", function()
+	local asset = fixtures.music_asset_id_with_structure
+	assert(asset, "needs a structured track from earlier getStructure step")
+	local sound = Instance.new("Sound")
+	sound.SoundId = "rbxassetid://" .. asset
+	local r, err = client:getStructure(sound)
+	sound:Destroy()
+	assert(r, "getStructure(sound) failed: " .. tostring(err))
+	assert(r.asset_id == asset, "resolved asset_id matches Sound.SoundId; got " .. tostring(r.asset_id))
+	return "ok"
+end)
+
+-- Same Instance arm via similar() — proves the cross-method consistency.
+step("similar_from_sound", function()
+	local asset = fixtures.music_asset_id
+	assert(asset, "needs music_asset_id from browse_trending")
+	local sound = Instance.new("Sound")
+	sound.SoundId = "rbxassetid://" .. asset
+	local r, err = client:similar(sound, { limit = 3 })
+	sound:Destroy()
+	assert(r, "similar(sound) failed: " .. tostring(err))
+	assert(typeof(r.tracks) == "table", "tracks present")
+	return #r.tracks
+end)
+
+-- Table-arm wire-format coverage end-to-end through the real requestGet
+-- URL builder. Pass a Track row from browse_trending directly — it carries
+-- many fields beyond asset_id, so this also confirms extras-merge precedence
+-- (extras passed → wins over track's own incidental fields).
+step("similar_from_track", function()
+	local pool, poolErr = client:browse({ type = "trending", limit = 3 })
+	assert(pool and #pool.tracks > 0, "browse for track-pass failed: " .. tostring(poolErr))
+	local track = pool.tracks[1]
+	local r, err = client:similar(track, { limit = 5 })
+	assert(r, "similar(track, extras) failed: " .. tostring(err))
+	return { seed_asset_id = track.asset_id, returned = #r.tracks }
 end)
 
 step("listPlaylists", function()

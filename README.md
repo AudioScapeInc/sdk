@@ -11,8 +11,8 @@ A Luau SDK for the [AudioScape Developer API](https://developer.audioscape.ai) �
 Add to your `wally.toml`:
 
 ```toml
-[dependencies]
-AudioScape = "this-fifo/audioscape-sdk@0.10.1"
+[server-dependencies]
+AudioScape = "this-fifo/audioscape-sdk@0.11.0"
 ```
 
 Then run:
@@ -21,7 +21,7 @@ Then run:
 wally install
 ```
 
-Since the SDK realm is `server`, Wally installs it to `ServerScriptService.Packages` (or your configured server packages location).
+The SDK's realm is `server`, so it must be declared under `[server-dependencies]` (Wally rejects server-realm packages placed under `[dependencies]`). Wally installs it to `ServerScriptService.Packages` (or your configured server packages location).
 
 ### Roblox Model
 
@@ -104,9 +104,11 @@ local result, err = client:search({
 -- result = { tracks, artists, albums, meta }
 ```
 
-### `client:similar(options)`
+### `client:similar(input, extras?)`
 
-Find tracks that sound similar to a given track.
+Find tracks that sound similar to a given track. `input` is anything that
+carries an asset_id — a string, a Track from a previous response, a `Sound`,
+or an `AudioPlayer`.
 
 ```lua
 local result, err = client:similar({
@@ -120,6 +122,12 @@ local result, err = client:similar({
     },
 })
 -- result = { tracks, meta }
+
+-- Shorthand: pass a Track from a previous result
+local result = client:similar(playlist.tracks[1], { limit = 10 })
+
+-- Shorthand: pass a playing Sound directly
+local result = client:similar(soundInstance)
 ```
 
 ### `client:browse(options)`
@@ -175,9 +183,10 @@ local result, err = client:sfxSearch({
 -- result = { tracks, categories, subcategories, meta }
 ```
 
-### `client:sfxSimilar(options)`
+### `client:sfxSimilar(input, extras?)`
 
-Find sound effects acoustically similar to a given asset.
+Find sound effects acoustically similar to a given asset. Same polymorphic
+input as `client:similar`.
 
 ```lua
 local result, err = client:sfxSimilar({
@@ -191,6 +200,9 @@ local result, err = client:sfxSimilar({
     },
 })
 -- result = { tracks, meta }
+
+-- Or pass an SfxTrack / Sound / asset_id string:
+local result = client:sfxSimilar(sfx.tracks[1], { limit = 10 })
 ```
 
 ### `client:getSfxTaxonomy()`
@@ -202,9 +214,11 @@ local taxonomy, err = client:getSfxTaxonomy()
 -- taxonomy.taxonomy = { { broader_category, categories = { { category, subcategories = { string } } } } }
 ```
 
-### `client:getStructure(options)`
+### `client:getStructure(input, extras?)`
 
-Fetch the beat grid and section structure for a track. Use this to sync animations, lighting, or VFX to the music.
+Fetch the beat grid and section structure for a track. Use this to sync
+animations, lighting, or VFX to the music. Same polymorphic input as
+`client:similar` — pass a string, a Track, a `Sound`, or an `AudioPlayer`.
 
 ```lua
 local structure, err = client:getStructure({
@@ -213,9 +227,14 @@ local structure, err = client:getStructure({
 -- structure = { asset_id, duration, bpm, track_energy, beat_grid, sections, phrases }
 -- structure.beat_grid = { times = { number }, downbeats = { number } }
 -- structure.sections = { { start, end, label, energy, bar_start, bar_end, color } }
+
+-- Or pull structure straight from the playing Sound:
+local structure = client:getStructure(soundInstance)
 ```
 
 `label` values come from: `Intro`, `Verse`, `Chorus`, `Drop`, `Bridge`, `Climax`, `Outro`, `Main`, `Break`, `Build`, `Breakdown`, `Transition`, `Peak`. `energy` is `1`–`4`.
+
+> **Note on AudioPlayer:** v0.11.0 auto-resolves `audioPlayer.Asset` (the legacy ContentId field). If your project uses the newer `audioPlayer.AudioContent` (a `Content` userdata), pass `audioPlayer.AudioContent.Uri` yourself for now.
 
 ### `client:beatAtTime(asset_id, t)`
 

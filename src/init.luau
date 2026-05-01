@@ -88,6 +88,46 @@ export type SfxSimilarOptions = {
 	}?,
 }
 
+-- Anything you can extract an asset_id from. The table arm uses an open
+-- indexer so existing options-table callers (StructureOptions, SimilarOptions,
+-- SfxSimilarOptions — all have extra fields beyond asset_id) typecheck under
+-- strict mode without a sealed-table mismatch.
+export type AssetIdResolvable = string | { asset_id: string, [string]: any } | Sound | AudioPlayer
+
+-- "Extras" mirror the legacy *Options shapes minus asset_id. Used as the
+-- optional second positional arg in the polymorphic forms — when you pass a
+-- Track / Sound / string and still want limit/offset/filters/playerId.
+export type StructureExtras = {
+	playerId: number?,
+}
+
+export type SimilarExtras = {
+	limit: number?,
+	offset: number?,
+	playerId: number?,
+	filters: {
+		genres: { string }?,
+		duration: {
+			min: number?,
+			max: number?,
+		}?,
+	}?,
+}
+
+export type SfxSimilarExtras = {
+	limit: number?,
+	offset: number?,
+	playerId: number?,
+	filters: {
+		categories: { string }?,
+		subcategories: { string }?,
+		duration: {
+			min: number?,
+			max: number?,
+		}?,
+	}?,
+}
+
 export type BrowseOptions = {
 	type: string, -- "artist" | "album" | "genre" | "mood" | "trending"
 	name: string?,
@@ -371,6 +411,58 @@ local function formatError(statusCode: number, body: string): string
 	end
 
 	return "Request failed (" .. tostring(statusCode) .. ")"
+end
+
+-- Resolves a flexible "anything that carries an asset_id" input to the bare
+-- numeric id string. Accepts:
+--   * "1234" or "rbxassetid://1234" (any string with a digit run)
+--   * a Sound instance — peels SoundId
+--   * an AudioPlayer instance — peels Asset (the legacy ContentId field;
+--     the newer .AudioContent is a Content userdata and is NOT auto-resolved
+--     in v0.11.0 — pass `audioPlayer.AudioContent.Uri` yourself for now)
+--   * any table with an `asset_id` string field (Track, PlaylistTrack,
+--     StructureOptions, SimilarOptions — i.e. either an SDK response row or
+--     the existing options table)
+-- Returns nil when the shape doesn't match. Order matters: the Instance
+-- branch runs before the table branch so a Sound-*shaped* table can't sneak
+-- through. Mirrored in src/AudioScapeClient.luau (kept duplicated to avoid
+-- adding a third file to the wally package — see CHANGELOG v0.11.0).
+local function resolveAssetId(input: any): string?
+	if input == nil then
+		return nil
+	end
+
+	local kind = typeof(input)
+
+	if kind == "Instance" then
+		local className = input.ClassName
+		local raw: any
+		if className == "Sound" then
+			raw = input.SoundId
+		elseif className == "AudioPlayer" then
+			raw = input.Asset
+		end
+		if type(raw) == "string" then
+			return string.match(raw, "%d+")
+		end
+		return nil
+	end
+
+	if kind == "string" then
+		if string.match(input, "^%d+$") then
+			return input
+		end
+		return string.match(input, "%d+")
+	end
+
+	if kind == "table" then
+		local id = input.asset_id
+		if type(id) == "string" and #id > 0 then
+			return id
+		end
+	end
+
+	return nil
 end
 
 local function request(self: AudioScapeClient, path: string, body: { [string]: any }, playerId: number?): (any, string?)
@@ -781,19 +873,30 @@ function AudioScape.search(self: AudioScapeClient, options: SearchOptions): (Sea
 	return request(self, "/v1/search", body, options.playerId)
 end
 
-function AudioScape.similar(self: AudioScapeClient, options: SimilarOptions): (SimilarResult?, string?)
-	if type(options.asset_id) ~= "string" or #options.asset_id == 0 then
-		return nil, "similar requires a non-empty asset_id string"
+-- Polymorphic input: pass an asset_id string, a Track-shaped table, a Sound,
+-- or an AudioPlayer. `extras` carries limit/offset/filters/playerId; if you
+-- pass the legacy options table (`{ asset_id, limit, ... }`) those fields are
+-- read from the input itself when `extras` is omitted.
+function AudioScape.similar(
+	self: AudioScapeClient,
+	input: AssetIdResolvable,
+	extras: SimilarExtras?
+): (SimilarResult?, string?)
+	local assetId = resolveAssetId(input)
+	if not assetId then
+		return nil, "similar requires an asset_id string, a track table, a Sound, or an AudioPlayer"
 	end
+
+	local opts: any = extras or (type(input) == "table" and input or {})
 
 	-- GET so CloudFront edge-caches. API still accepts the equivalent POST
 	-- for older SDK clients during migration.
 	return requestGet(self, "/v1/similar", {
-		asset_id = options.asset_id,
-		limit = options.limit,
-		offset = options.offset,
-		filters = options.filters,
-	}, options.playerId)
+		asset_id = assetId,
+		limit = opts.limit,
+		offset = opts.offset,
+		filters = opts.filters,
+	}, opts.playerId)
 end
 
 -- Search the SFX catalog. Pass `query` for free-text search, or pass
@@ -824,20 +927,28 @@ function AudioScape.getSfxTaxonomy(self: AudioScapeClient): (SfxTaxonomyResult?,
 	return requestGet(self, "/v1/sfx/taxonomy", {}, nil)
 end
 
--- Find sound effects acoustically similar to a given asset.
-function AudioScape.sfxSimilar(self: AudioScapeClient, options: SfxSimilarOptions): (SfxSimilarResult?, string?)
-	if type(options.asset_id) ~= "string" or #options.asset_id == 0 then
-		return nil, "sfxSimilar requires a non-empty asset_id string"
+-- Find sound effects acoustically similar to a given asset. Polymorphic
+-- input — see similar() for the (input, extras?) contract.
+function AudioScape.sfxSimilar(
+	self: AudioScapeClient,
+	input: AssetIdResolvable,
+	extras: SfxSimilarExtras?
+): (SfxSimilarResult?, string?)
+	local assetId = resolveAssetId(input)
+	if not assetId then
+		return nil, "sfxSimilar requires an asset_id string, a track table, a Sound, or an AudioPlayer"
 	end
+
+	local opts: any = extras or (type(input) == "table" and input or {})
 
 	-- GET so CloudFront edge-caches. API still accepts the equivalent POST
 	-- for older SDK clients during migration.
 	return requestGet(self, "/v1/sfx/similar", {
-		asset_id = options.asset_id,
-		limit = options.limit,
-		offset = options.offset,
-		filters = options.filters,
-	}, options.playerId)
+		asset_id = assetId,
+		limit = opts.limit,
+		offset = opts.offset,
+		filters = opts.filters,
+	}, opts.playerId)
 end
 
 function AudioScape.browse(
@@ -900,22 +1011,32 @@ end
      Track Structure (beat grid + sections)
      ────────────────────────────────────────── ]]
 
-function AudioScape.getStructure(self: AudioScapeClient, options: StructureOptions): (StructureResult?, string?)
-	if type(options.asset_id) ~= "string" or #options.asset_id == 0 then
-		return nil, "getStructure requires a non-empty asset_id string"
+-- Polymorphic input — see similar() for the (input, extras?) contract. Result
+-- is cached per resolved asset_id, so passing the same Sound/Track/string
+-- twice hits memory the second time.
+function AudioScape.getStructure(
+	self: AudioScapeClient,
+	input: AssetIdResolvable,
+	extras: StructureExtras?
+): (StructureResult?, string?)
+	local assetId = resolveAssetId(input)
+	if not assetId then
+		return nil, "getStructure requires an asset_id string, a track table, a Sound, or an AudioPlayer"
 	end
 
-	local cached = self._structureCache[options.asset_id]
+	local opts: any = extras or (type(input) == "table" and input or {})
+
+	local cached = self._structureCache[assetId]
 	if cached then
 		return cached, nil
 	end
 
-	local result, err = request(self, "/v1/track/structure", { asset_id = options.asset_id }, options.playerId)
+	local result, err = request(self, "/v1/track/structure", { asset_id = assetId }, opts.playerId)
 	if not result then
 		return nil, err
 	end
 
-	self._structureCache[options.asset_id] = result
+	self._structureCache[assetId] = result
 	return result, nil
 end
 
@@ -1210,6 +1331,7 @@ if _G.__AUDIOSCAPE_TEST then
 		computeAnalyticsBackoff = computeAnalyticsBackoff,
 		formatError = formatError,
 		buildQuery = buildQuery,
+		resolveAssetId = resolveAssetId,
 	}
 end
 
