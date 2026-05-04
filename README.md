@@ -12,7 +12,7 @@ Add to your `wally.toml`:
 
 ```toml
 [server-dependencies]
-AudioScape = "this-fifo/audioscape-sdk@0.11.0"
+AudioScape = "this-fifo/audioscape-sdk@0.12.0"
 ```
 
 Then run:
@@ -85,16 +85,20 @@ local client = AudioScape.new("your-api-key")
 
 ### `client:search(options)`
 
-Search the catalog using natural language.
+Search the catalog using natural language, or look up specific tracks by asset ID.
 
 ```lua
 local result, err = client:search({
-    query = "epic orchestral battle music",  -- required
+    query = "epic orchestral battle music",  -- required (unless asset_ids set)
     limit = 20,                              -- optional (default: 20, max: 100)
     offset = 0,                              -- optional
     playerId = player.UserId,                -- optional
     filters = {                              -- optional
-        genres = { "electronic", "pop" },    -- Roblox music_genre slugs (lowercase)
+        -- Each entry accepts the canonical name ("Hip Hop / Rap"),
+        -- the URL-safe slug ("hip-hop-rap", round-trip from track.genre_slug),
+        -- or a legacy Roblox music_genre slug ("hip-hop") — all resolve to
+        -- the same canonical taxonomy server-side.
+        genres = { "Hip Hop / Rap", "Electronic" },
         duration = { min = 60, max = 180 },  -- seconds
         min_play_count = 100000,             -- min lifetime Roblox plays
         min_likes = 500,                     -- min lifetime Roblox likes
@@ -102,6 +106,29 @@ local result, err = client:search({
     },
 })
 -- result = { tracks, artists, albums, meta }
+-- result.tracks[i] = { asset_id, name, artist, album, genre, genre_slug, duration, bpm, ... }
+```
+
+`query` is required unless you pass `asset_ids` for a direct batch lookup
+(see `client:lookup` below). Pass either one. When both are present, the API
+prefers `asset_ids` and skips text search. `result.meta.search_method` will be
+`"semantic"` / `"text"` / `"id"` / `"ids-batch"` depending on how the
+request resolved.
+
+### `client:lookup(options)`
+
+Resolve up to 100 known asset IDs in a single request. Returned tracks are in
+input order, filters are bypassed, and IDs that didn't match (deleted,
+delisted, non-public, or never existed) come back in `result.meta.missing_ids`.
+Sugar over `client:search({ asset_ids = ... })`.
+
+```lua
+local result, err = client:lookup({
+    asset_ids = { "1843209165", "9120386436", "1234567890" },
+    playerId = player.UserId,  -- optional
+})
+-- result = { tracks, artists, albums, meta }
+-- result.meta.missing_ids = { "1234567890" }  -- IDs that didn't resolve
 ```
 
 ### `client:similar(input, extras?)`
@@ -404,7 +431,7 @@ local client = AudioScapeClient.new()
 local result, err = client:search({ query = "chill beats", limit = 10 })
 ```
 
-**Available client methods:** `search`, `similar`, `browse`, `sfxSearch`, `sfxSimilar`, `sfxBrowse`, `getSfxTaxonomy`, `getStructure`, `getPlaylist`, `listPlaylists`
+**Available client methods:** `search`, `lookup`, `similar`, `browse`, `sfxSearch`, `sfxSimilar`, `sfxBrowse`, `getSfxTaxonomy`, `getStructure`, `getPlaylist`, `listPlaylists`
 
 > **Note:** `AudioScapeClient.luau` must be placed in `ReplicatedStorage` manually (or via the Studio plugin). The server SDK's Wally realm is `server`, so it installs to `ServerScriptService` — the client module is distributed separately.
 
