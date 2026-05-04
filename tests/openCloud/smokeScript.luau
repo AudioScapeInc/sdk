@@ -81,8 +81,28 @@ step("browse_trending", function()
 	local first = r.tracks[1]
 	assert(typeof(first.asset_id) == "string" and #first.asset_id > 0, "first track has asset_id")
 	assert(typeof(first.duration) == "number" and first.duration > 0, "first track has positive duration")
+	-- v0.12.0 contract: every tracks-returning endpoint emits genre_slug paired
+	-- with the canonical genre. Both must be non-empty strings — track.genre is
+	-- now the AudioScape canonical taxonomy uniformly across endpoints.
+	assert(typeof(first.genre) == "string" and #first.genre > 0, "first track has canonical genre")
+	assert(typeof(first.genre_slug) == "string" and #first.genre_slug > 0, "first track has genre_slug")
 	fixtures.music_asset_id = first.asset_id
 	return #r.tracks
+end)
+
+-- v0.12.0 contract: BrowseGenreItem exposes slug alongside name/display_name/
+-- track_count. Locks in the new field on the browse-list shape (separate from
+-- the per-track genre_slug verified above).
+step("browse_genre_list", function()
+	local r, err = client:browse({ type = "genre", limit = 5 })
+	assert(r, "browse genre list failed: " .. tostring(err))
+	assert(typeof(r.items) == "table" and #r.items > 0, "genre list returned items")
+	local first = r.items[1]
+	assert(typeof(first.name) == "string" and #first.name > 0, "BrowseGenreItem.name present")
+	assert(typeof(first.slug) == "string" and #first.slug > 0, "BrowseGenreItem.slug present (v0.12.0)")
+	assert(typeof(first.display_name) == "string" and #first.display_name > 0, "BrowseGenreItem.display_name present")
+	assert(typeof(first.track_count) == "number", "BrowseGenreItem.track_count is a number")
+	return #r.items
 end)
 
 step("sfxBrowse_trending", function()
@@ -117,6 +137,46 @@ step("search_sfx", function()
 		"err mentions valid input shape; got: " .. tostring(badErr)
 	)
 	return { total = r.meta.total, returned = #r.tracks }
+end)
+
+-- v0.12.0 contract: client:lookup batches up to 100 asset_ids and surfaces
+-- IDs that didn't resolve in meta.missing_ids. Pairs a real ID (from the
+-- trending fixture) with a deliberately-bogus one — the bogus ID must come
+-- back in missing_ids and not as a track.
+step("lookup_batch", function()
+	local realAsset = fixtures.music_asset_id
+	assert(realAsset, "needs music_asset_id from browse_trending")
+	-- 1-digit IDs don't exist in the catalog (asset IDs are much longer);
+	-- safe sentinel for "guaranteed missing".
+	local bogus = "1"
+	local r, err = client:lookup({ asset_ids = { realAsset, bogus } })
+	assert(r, "lookup failed: " .. tostring(err))
+	assert(typeof(r.tracks) == "table", "lookup returns a tracks list")
+	assert(#r.tracks == 1, "exactly one track resolved (the real one); got " .. tostring(#r.tracks))
+	assert(r.tracks[1].asset_id == realAsset, "the resolved track is the real one")
+	assert(
+		r.meta.search_method == "ids-batch",
+		"meta.search_method is 'ids-batch'; got " .. tostring(r.meta.search_method)
+	)
+	assert(typeof(r.meta.missing_ids) == "table", "meta.missing_ids surfaces")
+	local sawBogus = false
+	for _, id in r.meta.missing_ids do
+		if id == bogus then
+			sawBogus = true
+			break
+		end
+	end
+	assert(sawBogus, "bogus id appears in meta.missing_ids")
+
+	-- Pre-flight validation: empty options rejected without HTTP.
+	local rejected, badErr = client:lookup({} :: any)
+	assert(rejected == nil, "empty lookup options rejected pre-flight")
+	assert(
+		badErr and badErr:find("non-empty asset_ids array", 1, true),
+		"err mentions asset_ids; got: " .. tostring(badErr)
+	)
+
+	return { resolved = #r.tracks, missing = #r.meta.missing_ids }
 end)
 
 step("similar_music", function()

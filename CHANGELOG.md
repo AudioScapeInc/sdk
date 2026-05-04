@@ -1,5 +1,35 @@
 # Changelog
 
+## v0.12.0
+
+### Added
+
+- **`client:lookup({ asset_ids = { ... } })`.** Batch asset-ID lookup of up to 100 numeric strings. Filters are bypassed server-side, returned tracks preserve input order, and `meta.missing_ids: { string }?` lists IDs that didn't match (deleted, delisted, non-public, never existed). Sugar over `client:search` — equivalent to `client:search({ asset_ids = ... })`. Mirrored on `AudioScapeClient` (LocalScript-side) over the existing `Search` RemoteFunction; the server-side handler now accepts the `asset_ids`-only shape too.
+- **`asset_ids` option on `client:search`.** Same wire path as `client:lookup`; use this when you already have a `client:search` call site and want to reuse it for a known-ID lookup. `query` becomes optional when `asset_ids` is set; one or the other is required. The single-numeric-string and comma-delimited-numeric-string short-circuits on `query` (e.g. `query = "12345"` or `query = "12345,67890"`) keep working — the explicit `asset_ids` array is the recommended path because it never falls through to text search on miss.
+- **`Track.genre_slug` and `PlaylistTrack.genre_slug`.** URL-safe identifier paired with `genre` (e.g. `{ genre = "Hip Hop / Rap", genre_slug = "hip-hop-rap" }`). Round-trippable into `client:browse({ type = "genre", name = ... })` or `SearchOptions.filters.genres` without URL-encoding.
+- **`SearchResult.meta.missing_ids: { string }?`.** Only present on asset-ID lookup responses (single via `query`, batch via `asset_ids`). Omitted when every requested ID resolved.
+- **`SearchResult.meta.search_method`** can now also be `"id"` (single-ID short-circuit on `query`) or `"ids-batch"` (explicit `asset_ids`) in addition to the existing `"semantic"` / `"text"`.
+- **`AudioScape.BrowseGenreItem` typed export** for items returned by `client:browse({ type = "genre" })`. Fields: `name` (canonical), `slug` (URL-safe), `display_name`, `track_count`. `BrowseListResult.items` itself stays permissively typed (`{ [string]: any }`) so artist/album/mood items aren't forced through a discriminated union; consumers cast genre items manually:
+
+  ```lua
+  local result = client:browse({ type = "genre" })
+  for _, item in result.items do
+      local genre = item :: AudioScape.BrowseGenreItem
+      print(genre.display_name, "→", genre.slug)
+  end
+  ```
+
+### Changed
+
+- **`track.genre` is now uniformly the AudioScape canonical taxonomy across every endpoint.** Previously `client:search`, `client:similar`, and `client:getPlaylist` returned the lowercase Roblox `music_genre` slug (e.g. `"electronic"`) while `client:browse` returned the canonical name (e.g. `"Electronic"`). Now every track-returning endpoint returns the canonical form (e.g. `"Hip Hop / Rap"`, `"Electronic"`, `"R&B / Soul / Funk"`). **Heads-up:** code that compares `track.genre` against a lowercase string (e.g. `if track.genre == "electronic" then ...`) needs to update — either compare against the canonical form, or compare against `track.genre_slug` (new in this release). Code that displays `track.genre` as a label only sees prettier output, no change required.
+- **`SearchOptions.filters.genres` and `SimilarOptions.filters.genres` accept any of four shapes**, all resolved server-side to canonical. The shapes: AudioScape canonical (`"Hip Hop / Rap"`), AudioScape URL-safe slug (`"hip-hop-rap"`, the new `track.genre_slug`), off-case canonical (`"hip hop / rap"`), or the legacy Roblox `music_genre` slug (`"hip-hop"`). Existing call sites continue to work; new code can round-trip `track.genre_slug` straight back in.
+- **`client:browse({ type = "genre" })` items now expose `slug`** alongside `name` / `display_name` / `track_count`. Drill-downs (`client:browse({ type = "genre", name = ... })`) accept the slug, the canonical name, or off-case canonical — all resolve to the same set of tracks.
+
+### Notes
+
+- Three previously-hidden genres now appear in the `client:browse({ type = "genre" })` list response: **Hardstyle**, **Breakcore**, and **Jersey Club**. Filter-side and drill-down support was already in place; this release only changes their visibility in the browse list.
+- The `client:search` validation message changed: was `"search requires a non-empty query string"`, now `"search requires either a non-empty query string or a non-empty asset_ids array"`. Code that pattern-matches on the exact error string needs updating.
+
 ## v0.11.0
 
 ### Added

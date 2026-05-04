@@ -26,11 +26,26 @@ local DEFAULT_MAX_BATCH_SIZE = 50 -- events per flush
 local DEFAULT_MAX_QUEUE_SIZE = 500 -- max buffered events before oldest are dropped
 
 export type SearchOptions = {
-	query: string,
+	-- Required when `asset_ids` is omitted. Free-text query (artist, mood,
+	-- genre, description). Two special shapes also short-circuit to a direct
+	-- asset-ID lookup: a single numeric string ("12345") or a comma-delimited
+	-- list ("123,456,789"). Single-ID-via-query falls through to text search
+	-- if not found; the explicit `asset_ids` array does not.
+	query: string?,
+	-- Explicit batch asset-ID lookup. Up to 100 numeric strings. When
+	-- present, takes priority over `query` and bypasses all `filters`.
+	-- Returned tracks preserve input order; IDs that don't exist (or are
+	-- deleted/delisted/non-public) appear in `meta.missing_ids`.
+	asset_ids: { string }?,
 	limit: number?,
 	offset: number?,
 	playerId: number?,
 	filters: {
+		-- Each entry accepts the AudioScape canonical name ("Hip Hop / Rap"),
+		-- the URL-safe slug ("hip-hop-rap"), or a legacy Roblox music_genre
+		-- slug ("hip-hop") — all resolve to the canonical taxonomy. Round-
+		-- trip a `track.genre_slug` from a previous response back into here
+		-- to filter on that genre.
 		genres: { string }?,
 		duration: {
 			min: number?,
@@ -40,6 +55,15 @@ export type SearchOptions = {
 		min_likes: number?,
 		created_after: string?,
 	}?,
+}
+
+-- Convenience options for client:lookup — sugar around client:search with
+-- only asset_ids set. asset_ids is the only required field; limit/offset are
+-- accepted for API-shape consistency (filters are not — explicit ID lookups
+-- bypass all filters).
+export type LookupOptions = {
+	asset_ids: { string },
+	playerId: number?,
 }
 
 export type SimilarOptions = {
@@ -149,7 +173,13 @@ export type Track = {
 	name: string,
 	artist: string,
 	album: string,
+	-- Canonical genre from the AudioScape taxonomy (e.g. "Hip Hop / Rap").
+	-- Stable across endpoints; use for display.
 	genre: string,
+	-- URL-safe identifier paired with `genre` (e.g. "hip-hop-rap"). Pass
+	-- back into client:browse({ type = "genre", name = ... }) or into
+	-- SearchOptions.filters.genres without URL-encoding.
+	genre_slug: string,
 	duration: number,
 	bpm: number?,
 	score: number,
@@ -165,8 +195,12 @@ export type SearchResult = {
 		total: number,
 		limit: number,
 		offset: number,
+		-- "semantic" | "text" | "id" | "ids-batch"
 		search_method: string,
 		matched_artist: string?,
+		-- Asset-ID lookup mode only. Lists IDs that didn't match (deleted,
+		-- delisted, non-public, never existed). Omitted when empty.
+		missing_ids: { string }?,
 	},
 }
 
@@ -243,6 +277,27 @@ export type BrowseListResult = {
 		offset: number,
 		type: string,
 	},
+}
+
+-- Typed shape of an item from `client:browse({ type = "genre" }).items[i]`.
+-- BrowseListResult.items stays permissive so other browse types
+-- (artist/album/mood) aren't forced through a discriminated union;
+-- consumers querying genre items are expected to cast manually:
+--
+--   local result = client:browse({ type = "genre" })
+--   for _, item in result.items do
+--       local genre = item :: AudioScape.BrowseGenreItem
+--       print(genre.display_name, "→", genre.slug)
+--   end
+export type BrowseGenreItem = {
+	-- Canonical genre name from the AudioScape taxonomy (e.g. "Hip Hop / Rap").
+	name: string,
+	-- URL-safe identifier (e.g. "hip-hop-rap"). Pass back into client:browse
+	-- as the `name` parameter to drill into this genre's tracks.
+	slug: string,
+	-- Display label (currently equal to `name`, may diverge in the future).
+	display_name: string,
+	track_count: number,
 }
 
 export type BrowseTracksResult = {
@@ -328,7 +383,10 @@ export type PlaylistTrack = {
 	name: string,
 	artist: string,
 	album: string,
+	-- Canonical genre from the AudioScape taxonomy (e.g. "Hip Hop / Rap").
 	genre: string,
+	-- URL-safe identifier paired with `genre` (e.g. "hip-hop-rap").
+	genre_slug: string,
 	duration: number,
 	bpm: number?,
 	position: number,
@@ -859,18 +917,39 @@ end
      ────────────────────────────────────────── ]]
 
 function AudioScape.search(self: AudioScapeClient, options: SearchOptions): (SearchResult?, string?)
-	if type(options.query) ~= "string" or #options.query == 0 then
-		return nil, "search requires a non-empty query string"
+	local hasQuery = type(options.query) == "string" and #options.query > 0
+	local hasIds = type(options.asset_ids) == "table" and #options.asset_ids > 0
+	if not hasQuery and not hasIds then
+		return nil, "search requires either a non-empty query string or a non-empty asset_ids array"
 	end
 
 	local body: { [string]: any } = {
-		query = options.query,
 		limit = options.limit,
 		offset = options.offset,
 		filters = options.filters,
 	}
+	if hasQuery then
+		body.query = options.query
+	end
+	if hasIds then
+		body.asset_ids = options.asset_ids
+	end
 
 	return request(self, "/v1/search", body, options.playerId)
+end
+
+-- Sugar over client:search for known-asset-ID batch lookups. Equivalent to
+-- client:search({ asset_ids = options.asset_ids, playerId = options.playerId }).
+-- Filters intentionally aren't accepted — explicit ID lookups bypass them
+-- server-side, and exposing the field here would mislead. Up to 100 IDs.
+function AudioScape.lookup(self: AudioScapeClient, options: LookupOptions): (SearchResult?, string?)
+	if type(options) ~= "table" or type(options.asset_ids) ~= "table" or #options.asset_ids == 0 then
+		return nil, "lookup requires a non-empty asset_ids array of numeric strings"
+	end
+	return AudioScape.search(self, {
+		asset_ids = options.asset_ids,
+		playerId = options.playerId,
+	})
 end
 
 -- Polymorphic input: pass an asset_id string, a Track-shaped table, a Sound,
@@ -1173,11 +1252,17 @@ function AudioScape.enableClientAccess(self: AudioScapeClient)
 		if not checkRateLimit(player) then
 			return nil, "Rate limited — please wait before making another request"
 		end
-		if type(options) ~= "table" or type(options.query) ~= "string" then
-			return nil, "search requires a table with a query string"
+		if type(options) ~= "table" then
+			return nil, "search requires a table with a query string or an asset_ids array"
+		end
+		local hasQuery = type(options.query) == "string" and #options.query > 0
+		local hasIds = type(options.asset_ids) == "table" and #options.asset_ids > 0
+		if not hasQuery and not hasIds then
+			return nil, "search requires a query string or a non-empty asset_ids array"
 		end
 		return self:search({
 			query = options.query,
+			asset_ids = options.asset_ids,
 			limit = options.limit,
 			offset = options.offset,
 			filters = options.filters,

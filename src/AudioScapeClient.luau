@@ -93,12 +93,29 @@ local function resolveAssetId(input: any): string?
 	return nil
 end
 
--- Search the catalog using natural language.
+-- Search the catalog. Pass `query` for free-text/natural-language search, or
+-- `asset_ids` for a direct batch lookup of up to 100 IDs (filters bypassed,
+-- results in input order, missing IDs surfaced in `meta.missing_ids`).
 function AudioScapeClient.search(
 	self: AudioScapeClientInstance,
-	options: { query: string, limit: number?, offset: number?, filters: any? }
+	options: {
+		query: string?,
+		asset_ids: { string }?,
+		limit: number?,
+		offset: number?,
+		filters: any?,
+	}
 )
 	return invoke(self._remotes, "Search", options)
+end
+
+-- Sugar over client:search for known-asset-ID batch lookups.
+-- Equivalent to client:search({ asset_ids = options.asset_ids }).
+function AudioScapeClient.lookup(self: AudioScapeClientInstance, options: { asset_ids: { string } }): (any, string?)
+	if type(options) ~= "table" or type(options.asset_ids) ~= "table" or #options.asset_ids == 0 then
+		return nil, "lookup requires a non-empty asset_ids array of numeric strings"
+	end
+	return invoke(self._remotes, "Search", { asset_ids = options.asset_ids })
 end
 
 -- Find tracks that sound similar to a given track. Polymorphic input —
