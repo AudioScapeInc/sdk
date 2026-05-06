@@ -173,10 +173,12 @@ function AudioScapeClient.getSfxTaxonomy(self: AudioScapeClientInstance)
 	return invoke(self._remotes, "GetSfxTaxonomy")
 end
 
--- Browse by artist, album, genre, mood, or trending.
+-- Browse by artist, album, genre, mood, or trending. `sort` defaults to
+-- "popular" server-side; pass "alpha" or "recent" for drill-downs that
+-- need fresh uploads instead of engagement ranking.
 function AudioScapeClient.browse(
 	self: AudioScapeClientInstance,
-	options: { type: string, name: string?, limit: number?, offset: number? }
+	options: { type: string, name: string?, limit: number?, offset: number?, sort: string? }
 )
 	return invoke(self._remotes, "Browse", options)
 end

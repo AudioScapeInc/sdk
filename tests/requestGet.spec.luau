@@ -63,3 +63,19 @@ do
 	local r, e = client:browse({ type = "trending" })
 	assert(r == nil and e == "Rate limited — too many requests (429)", "got: " .. tostring(e))
 end
+
+-- sort: every accepted value forwards into the query string verbatim
+for _, sortMode in { "popular", "alpha", "recent" } do
+	http:reset()
+	http:queueResponse({ Success = true, StatusCode = 200, Body = "{}" })
+	client:browse({ type = "genre", name = "jazz", sort = sortMode })
+	recorded = http.requests[1]
+	assert(recorded.url:find("sort=" .. sortMode, 1, true), "sort=" .. sortMode .. " in query; got " .. recorded.url)
+end
+
+-- nil sort omitted from query string (consistent with limit/offset)
+http:reset()
+http:queueResponse({ Success = true, StatusCode = 200, Body = "{}" })
+client:browse({ type = "genre", name = "jazz" })
+recorded = http.requests[1]
+assert(not recorded.url:find("sort", 1, true), "nil sort should not appear in URL; got " .. recorded.url)

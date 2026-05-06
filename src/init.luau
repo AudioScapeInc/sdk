@@ -155,6 +155,12 @@ export type SfxSimilarExtras = {
 export type BrowseOptions = {
 	type: string, -- "artist" | "album" | "genre" | "mood" | "trending"
 	name: string?,
+	-- "popular" (default — popularity ranking, omits tracks with no
+	-- engagement), "alpha" (track name A→Z), or "recent" (newest first).
+	-- Drill-down only; ignored for list mode and for type = "trending"
+	-- (already popularity-ordered). Pick alpha or recent to surface fresh
+	-- uploads that haven't accumulated engagement yet.
+	sort: string?,
 	limit: number?,
 	offset: number?,
 	playerId: number?,
@@ -1045,6 +1051,7 @@ function AudioScape.browse(
 		name = options.name,
 		limit = options.limit,
 		offset = options.offset,
+		sort = options.sort,
 	}, options.playerId)
 end
 
@@ -1344,6 +1351,7 @@ function AudioScape.enableClientAccess(self: AudioScapeClient)
 			name = options.name,
 			limit = options.limit,
 			offset = options.offset,
+			sort = options.sort,
 			playerId = player.UserId,
 		})
 	end)
