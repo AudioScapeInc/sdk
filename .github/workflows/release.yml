@@ -23,7 +23,7 @@ jobs:
       contents: write
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install Rokit and pinned tools
         uses: CompeyDev/setup-rokit@v0.1.2
