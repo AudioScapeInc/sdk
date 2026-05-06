@@ -12,7 +12,7 @@ Add to your `wally.toml`:
 
 ```toml
 [server-dependencies]
-AudioScape = "this-fifo/audioscape-sdk@0.12.0"
+AudioScape = "this-fifo/audioscape-sdk@0.13.0"
 ```
 
 Then run:
@@ -166,9 +166,12 @@ Browse by artist, album, genre, mood, or trending.
 local result, err = client:browse({ type = "genre" })
 -- result = { items, meta }
 
--- Get tracks for a specific genre
+-- Get tracks for a specific genre (defaults to popularity-ranked)
 local result, err = client:browse({ type = "genre", name = "electronic", limit = 20 })
 -- result = { tracks, meta }
+
+-- Same drill-down, alpha sort to surface fresh uploads
+local result, err = client:browse({ type = "genre", name = "electronic", sort = "alpha", limit = 20 })
 
 -- Trending music (no name needed — returns the top tracks directly)
 local result, err = client:browse({ type = "trending", limit = 50 })
@@ -176,6 +179,8 @@ local result, err = client:browse({ type = "trending", limit = 50 })
 ```
 
 **Browse types:** `artist`, `album`, `genre`, `mood`, `trending`
+
+**Sort (drill-down only):** `popular` (default — global popularity ranking, omits tracks with no engagement), `alpha` (track name A→Z), `recent` (newest first). Ignored for list mode and for `trending` (already popularity-ordered). Pick `alpha` or `recent` to surface tracks that haven't accumulated engagement yet.
 
 Trending is a popularity-ranked list of music tracks refreshed daily, capped at 200 entries. Player engagement signals (plays, favorites, votes, queue adds, listen duration, plus custom events) are exponentially decayed over a 60-day window with a 30-day half-life, so recent activity dominates.
 

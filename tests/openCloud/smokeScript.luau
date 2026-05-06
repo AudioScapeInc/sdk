@@ -105,6 +105,26 @@ step("browse_genre_list", function()
 	return #r.items
 end)
 
+-- v0.13.0 contract: drill-down accepts `sort` and the response echoes it in
+-- meta. `popular` is the server-side default; we exercise an explicit value
+-- (alpha) to prove the param round-trips, then verify default-omitted falls
+-- back to popular ordering. Genre picked from the list above to avoid
+-- fixture rot.
+step("browse_genre_sort", function()
+	local genreList, listErr = client:browse({ type = "genre", limit = 1 })
+	assert(genreList and genreList.items[1], "needs a genre slug from browse_genre_list: " .. tostring(listErr))
+	local slug = genreList.items[1].slug
+
+	local alpha, alphaErr = client:browse({ type = "genre", name = slug, sort = "alpha", limit = 3 })
+	assert(alpha, "browse alpha sort failed: " .. tostring(alphaErr))
+	assert(alpha.meta.sort == "alpha", "meta.sort echoes 'alpha'; got " .. tostring(alpha.meta.sort))
+
+	local default, defaultErr = client:browse({ type = "genre", name = slug, limit = 3 })
+	assert(default, "browse default sort failed: " .. tostring(defaultErr))
+	assert(default.meta.sort == "popular", "meta.sort defaults to 'popular'; got " .. tostring(default.meta.sort))
+	return slug
+end)
+
 step("sfxBrowse_trending", function()
 	local r, err = client:sfxBrowse({ type = "trending", limit = 5 })
 	assert(r, "sfxBrowse failed: " .. tostring(err))

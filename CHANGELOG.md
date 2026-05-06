@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.13.0
+
+### Added
+
+- **`sort` option on `client:browse`** drill-downs (any call with `name = ...`). Accepts `"popular"` (the new default — global popularity ranking, omits tracks with no engagement), `"alpha"` (track name A→Z), or `"recent"` (newest first). Server defaults to `popular` when omitted, so existing call sites that pass `{ type = "genre", name = "..." }` now return popularity-ranked tracks instead of alphabetical. Pick `alpha` or `recent` to surface tracks that haven't accumulated engagement. Ignored for list mode (`type = "genre"` with no `name`) and for `type = "trending"` (already popularity-ordered). The companion server-side `Browse` RemoteFunction handler in `AudioScapeClient` forwards the field unchanged.
+
+### Notes
+
+- This release flips the default ordering for drill-down browse responses. If you were relying on alphabetical order for `client:browse({ type = "artist" | "album" | "genre" | "mood", name = ... })`, pass `sort = "alpha"` explicitly. Trending and list-mode responses are unchanged.
+
 ## v0.12.0
 
 ### Added
