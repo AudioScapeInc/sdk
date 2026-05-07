@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.14.1
+
+### Changed
+
+- Internal comments on the GET helpers and call sites no longer claim the API "still accepts the equivalent POST" — that's no longer true. No public API or behavior changes.
+
 ## v0.14.0
 
 ### Added

@@ -602,9 +602,8 @@ local function buildQuery(params: { [string]: any }): string
 end
 
 -- GET sibling of request() for endpoints CloudFront edge-caches
--- (v0.10.0: browse, sfxBrowse, sfxTaxonomy; v0.10.1: similar, sfxSimilar).
--- API still accepts the equivalent POST for older SDK clients; flagged as a
--- v1.0.0 cleanup candidate to fold both into one method-aware helper.
+-- (browse, sfxBrowse, sfxTaxonomy, similar, sfxSimilar). Flagged as a v1.0.0
+-- cleanup candidate to fold both into one method-aware helper.
 local function requestGet(
 	self: AudioScapeClient,
 	path: string,
@@ -987,9 +986,8 @@ function AudioScape.similar(
 
 	local opts: any = extras or (type(input) == "table" and input or {})
 
-	-- GET so CloudFront edge-caches. API still accepts the equivalent POST
-	-- for older SDK clients during migration. dedupe=false is omitted (no
-	-- point sending the no-op default — keeps the cache key clean).
+	-- GET so CloudFront edge-caches. dedupe=false is omitted (no point
+	-- sending the no-op default — keeps the cache key clean).
 	return requestGet(self, "/v1/similar", {
 		asset_id = assetId,
 		limit = opts.limit,
@@ -1042,9 +1040,8 @@ function AudioScape.sfxSimilar(
 
 	local opts: any = extras or (type(input) == "table" and input or {})
 
-	-- GET so CloudFront edge-caches. API still accepts the equivalent POST
-	-- for older SDK clients during migration. dedupe=false is omitted (no
-	-- point sending the no-op default — keeps the cache key clean).
+	-- GET so CloudFront edge-caches. dedupe=false is omitted (no point
+	-- sending the no-op default — keeps the cache key clean).
 	return requestGet(self, "/v1/sfx/similar", {
 		asset_id = assetId,
 		limit = opts.limit,
@@ -1063,8 +1060,7 @@ function AudioScape.browse(
 		return nil, "browse requires type to be one of: artist, album, genre, mood, trending"
 	end
 
-	-- v0.10.0: GET so CloudFront edge-caches. POST endpoint still works on
-	-- the API for older SDK clients.
+	-- GET so CloudFront edge-caches.
 	return requestGet(self, "/v1/browse", {
 		type = options.type,
 		name = options.name,
@@ -1082,8 +1078,7 @@ function AudioScape.sfxBrowse(self: AudioScapeClient, options: SfxBrowseOptions)
 		return nil, "sfxBrowse requires type to be one of: trending"
 	end
 
-	-- v0.10.0: GET so CloudFront edge-caches. POST endpoint still works on
-	-- the API for older SDK clients.
+	-- GET so CloudFront edge-caches.
 	return requestGet(self, "/v1/sfx/browse", {
 		type = options.type,
 		name = options.name,
