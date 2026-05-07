@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.14.0
+
+### Added
+
+- **`max_score` and `dedupe` options on `client:similar` and `client:sfxSimilar`.** Both methods now accept two optional filters for dropping near-duplicate matches of the seed asset from the results. `max_score` (number, 0..1) drops results whose `score` field is at or above the threshold. `dedupe` (boolean) is a shortcut that enables a sensible default threshold without picking a number — most callers will reach for this. If both are set, `max_score` wins.
+  - Particularly useful with SFX libraries that contain many uploads of the same generic clip (footsteps, ticks, short impacts), where the strongest similarity matches can be exact duplicates of the seed sound.
+  - Accepted on the `extras` bag (`client:similar(asset_id, { dedupe = true })`) and on the legacy options-table form (`client:similar({ asset_id = "...", max_score = 0.9 })`).
+  - Mirrored on `AudioScapeClient` (LocalScript-side) over the existing `Similar` and `SfxSimilar` RemoteFunctions; the server forwards the new fields unchanged.
+  - `dedupe = false` is omitted from the wire request — no point sending the no-op default; keeps edge caches clean.
+
 ## v0.13.0
 
 ### Added
