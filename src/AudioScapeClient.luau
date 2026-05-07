@@ -121,11 +121,18 @@ end
 -- Find tracks that sound similar to a given track. Polymorphic input —
 -- pass an asset_id string, a Track table, a Sound, or an AudioPlayer; pass
 -- `extras` when you want limit/offset/filters and didn't use the legacy
--- options-table form.
+-- options-table form. `max_score`/`dedupe` filter near-duplicate matches
+-- of the seed track from the results.
 function AudioScapeClient.similar(
 	self: AudioScapeClientInstance,
 	input: AssetIdResolvable,
-	extras: { limit: number?, offset: number?, filters: any? }?
+	extras: {
+		limit: number?,
+		offset: number?,
+		filters: any?,
+		max_score: number?,
+		dedupe: boolean?,
+	}?
 ): (any, string?)
 	local assetId = resolveAssetId(input)
 	if not assetId then
@@ -137,6 +144,8 @@ function AudioScapeClient.similar(
 		limit = opts.limit,
 		offset = opts.offset,
 		filters = opts.filters,
+		max_score = opts.max_score,
+		dedupe = if opts.dedupe == true then true else nil,
 	})
 end
 
@@ -149,11 +158,19 @@ function AudioScapeClient.sfxSearch(
 end
 
 -- Find sound effects acoustically similar to a given asset. Polymorphic
--- input — see similar() for the (input, extras?) contract.
+-- input — see similar() for the (input, extras?) contract. `max_score`/
+-- `dedupe` filter near-duplicate matches of the seed sound — common in
+-- SFX libraries with many uploads of the same generic clip.
 function AudioScapeClient.sfxSimilar(
 	self: AudioScapeClientInstance,
 	input: AssetIdResolvable,
-	extras: { limit: number?, offset: number?, filters: any? }?
+	extras: {
+		limit: number?,
+		offset: number?,
+		filters: any?,
+		max_score: number?,
+		dedupe: boolean?,
+	}?
 ): (any, string?)
 	local assetId = resolveAssetId(input)
 	if not assetId then
@@ -165,6 +182,8 @@ function AudioScapeClient.sfxSimilar(
 		limit = opts.limit,
 		offset = opts.offset,
 		filters = opts.filters,
+		max_score = opts.max_score,
+		dedupe = if opts.dedupe == true then true else nil,
 	})
 end
 

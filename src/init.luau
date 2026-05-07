@@ -136,6 +136,12 @@ export type SimilarExtras = {
 			max: number?,
 		}?,
 	}?,
+	-- Drops results whose `score` is at or above this value (0..1). Useful
+	-- for filtering out near-duplicates of the seed track.
+	max_score: number?,
+	-- Shortcut: drops near-duplicates of the seed track using a sensible
+	-- default threshold. `max_score` takes precedence if both are set.
+	dedupe: boolean?,
 }
 
 export type SfxSimilarExtras = {
@@ -150,6 +156,13 @@ export type SfxSimilarExtras = {
 			max: number?,
 		}?,
 	}?,
+	-- Drops results whose `score` is at or above this value (0..1). Useful
+	-- for filtering out near-duplicates of the seed sound — common in SFX
+	-- libraries with many uploads of the same generic clip.
+	max_score: number?,
+	-- Shortcut: drops near-duplicates of the seed sound using a sensible
+	-- default threshold. `max_score` takes precedence if both are set.
+	dedupe: boolean?,
 }
 
 export type BrowseOptions = {
@@ -975,12 +988,15 @@ function AudioScape.similar(
 	local opts: any = extras or (type(input) == "table" and input or {})
 
 	-- GET so CloudFront edge-caches. API still accepts the equivalent POST
-	-- for older SDK clients during migration.
+	-- for older SDK clients during migration. dedupe=false is omitted (no
+	-- point sending the no-op default — keeps the cache key clean).
 	return requestGet(self, "/v1/similar", {
 		asset_id = assetId,
 		limit = opts.limit,
 		offset = opts.offset,
 		filters = opts.filters,
+		max_score = opts.max_score,
+		dedupe = if opts.dedupe == true then true else nil,
 	}, opts.playerId)
 end
 
@@ -1027,12 +1043,15 @@ function AudioScape.sfxSimilar(
 	local opts: any = extras or (type(input) == "table" and input or {})
 
 	-- GET so CloudFront edge-caches. API still accepts the equivalent POST
-	-- for older SDK clients during migration.
+	-- for older SDK clients during migration. dedupe=false is omitted (no
+	-- point sending the no-op default — keeps the cache key clean).
 	return requestGet(self, "/v1/sfx/similar", {
 		asset_id = assetId,
 		limit = opts.limit,
 		offset = opts.offset,
 		filters = opts.filters,
+		max_score = opts.max_score,
+		dedupe = if opts.dedupe == true then true else nil,
 	}, opts.playerId)
 end
 
