@@ -122,3 +122,67 @@ do
 	)
 	assert(#http.requests == 0, "no HTTP for invalid input")
 end
+
+-- 6. max_score on the wire (extras form)
+do
+	local http = mockHttp.new()
+	local sdk = loadSdk({ http = http })
+	local client = (sdk :: any).new("test-key")
+
+	http:queueResponse(emptyResponse())
+	client:sfxSimilar("88", { max_score = 0.9 })
+	assertEndpoint(http)
+	local q = decodeQuery(http.requests[1].url)
+	assert(q.max_score == "0.9", "extras.max_score serializes as 0.9; got: " .. tostring(q.max_score))
+end
+
+-- 7. dedupe=true on the wire
+do
+	local http = mockHttp.new()
+	local sdk = loadSdk({ http = http })
+	local client = (sdk :: any).new("test-key")
+
+	http:queueResponse(emptyResponse())
+	client:sfxSimilar("99", { dedupe = true })
+	assertEndpoint(http)
+	local q = decodeQuery(http.requests[1].url)
+	assert(q.dedupe == "true", "dedupe=true serializes as 'true'; got: " .. tostring(q.dedupe))
+	assert(q.max_score == nil, "dedupe alone does not also set max_score; got: " .. tostring(q.max_score))
+end
+
+-- 8. dedupe=false omitted from the wire
+do
+	local http = mockHttp.new()
+	local sdk = loadSdk({ http = http })
+	local client = (sdk :: any).new("test-key")
+
+	http:queueResponse(emptyResponse())
+	client:sfxSimilar("100", { dedupe = false })
+	local q = decodeQuery(http.requests[1].url)
+	assert(q.dedupe == nil, "dedupe=false should not appear on the wire; got: " .. tostring(q.dedupe))
+end
+
+-- 9. legacy options-table carries max_score and dedupe
+do
+	local http = mockHttp.new()
+	local sdk = loadSdk({ http = http })
+	local client = (sdk :: any).new("test-key")
+
+	http:queueResponse(emptyResponse())
+	client:sfxSimilar({ asset_id = "111", max_score = 0.85, dedupe = true })
+	local q = decodeQuery(http.requests[1].url)
+	assert(q.max_score == "0.85", "legacy max_score; got: " .. tostring(q.max_score))
+	assert(q.dedupe == "true", "legacy dedupe; got: " .. tostring(q.dedupe))
+end
+
+-- 10. extras overrides input for max_score / dedupe
+do
+	local http = mockHttp.new()
+	local sdk = loadSdk({ http = http })
+	local client = (sdk :: any).new("test-key")
+
+	http:queueResponse(emptyResponse())
+	client:sfxSimilar({ asset_id = "222", max_score = 0.5 }, { max_score = 0.95 })
+	local q = decodeQuery(http.requests[1].url)
+	assert(q.max_score == "0.95", "extras.max_score wins; got: " .. tostring(q.max_score))
+end

@@ -159,3 +159,71 @@ do
 	assert(r == nil and e, "empty asset_id rejected pre-flight")
 	assert(#http.requests == 0, "no HTTP for empty asset_id")
 end
+
+-- 8. max_score on the wire (extras form)
+do
+	local http = mockHttp.new()
+	local sdk = loadSdk({ http = http })
+	local client = (sdk :: any).new("test-key")
+
+	http:queueResponse(emptyResponse())
+	client:similar("333", { max_score = 0.85 })
+
+	local q = decodeQuery(http.requests[1].url)
+	assert(q.max_score == "0.85", "extras.max_score serializes as 0.85; got: " .. tostring(q.max_score))
+end
+
+-- 9. max_score on the wire (legacy options-table form)
+do
+	local http = mockHttp.new()
+	local sdk = loadSdk({ http = http })
+	local client = (sdk :: any).new("test-key")
+
+	http:queueResponse(emptyResponse())
+	client:similar({ asset_id = "444", max_score = 0.9 })
+
+	local q = decodeQuery(http.requests[1].url)
+	assert(q.max_score == "0.9", "legacy max_score serializes as 0.9; got: " .. tostring(q.max_score))
+end
+
+-- 10. dedupe=true on the wire
+do
+	local http = mockHttp.new()
+	local sdk = loadSdk({ http = http })
+	local client = (sdk :: any).new("test-key")
+
+	http:queueResponse(emptyResponse())
+	client:similar("555", { dedupe = true })
+
+	local q = decodeQuery(http.requests[1].url)
+	assert(q.dedupe == "true", "dedupe=true serializes as 'true'; got: " .. tostring(q.dedupe))
+	assert(q.max_score == nil, "dedupe alone does not also set max_score on the wire; got: " .. tostring(q.max_score))
+end
+
+-- 11. dedupe=false omitted from the wire (no point sending the no-op default)
+do
+	local http = mockHttp.new()
+	local sdk = loadSdk({ http = http })
+	local client = (sdk :: any).new("test-key")
+
+	http:queueResponse(emptyResponse())
+	client:similar("666", { dedupe = false })
+
+	local q = decodeQuery(http.requests[1].url)
+	assert(q.dedupe == nil, "dedupe=false should not appear on the wire; got: " .. tostring(q.dedupe))
+end
+
+-- 12. extras override input table for max_score / dedupe (whole-bag rule)
+do
+	local http = mockHttp.new()
+	local sdk = loadSdk({ http = http })
+	local client = (sdk :: any).new("test-key")
+
+	http:queueResponse(emptyResponse())
+	-- Input has max_score=0.5; extras has max_score=0.95 → extras wins.
+	client:similar({ asset_id = "777", max_score = 0.5 }, { max_score = 0.95, dedupe = true })
+
+	local q = decodeQuery(http.requests[1].url)
+	assert(q.max_score == "0.95", "extras.max_score wins; got: " .. tostring(q.max_score))
+	assert(q.dedupe == "true", "extras.dedupe carried alongside max_score; got: " .. tostring(q.dedupe))
+end
