@@ -2,8 +2,8 @@
 -- Server-side smoke suite run inside Roblox via Open Cloud Luau Execution.
 -- This is the project's ONLY integration layer (Lune specs cover pure logic).
 -- Covers every HTTP-hitting public method against the real AudioScape API
--- through the real Roblox engine (real HttpService, Sound, RemoteFunction,
--- workspace:GetServerTimeNow).
+-- through the real Roblox engine (real HttpService, AudioPlayer +
+-- AudioDeviceOutput + Wire, RemoteFunction, workspace:GetServerTimeNow).
 --
 -- Returns { ok, results, fixtures } where results is a list of per-step
 -- { name, ok, value?, err? }. The harness surfaces the per-step list and
@@ -364,12 +364,63 @@ step("analytics_flush", function()
 	return "9 events posted"
 end)
 
--- createPlayer instantiates a real Sound and connects Sound.Ended. Not
--- testable in Lune (the mock can't model Sound events faithfully).
+-- createPlayer instantiates a real AudioPlayer + AudioDeviceOutput + Wire and
+-- connects AudioPlayer.Ended. Not testable in Lune (the mock can't model the
+-- audio API faithfully). v0.15.0 migrated this off legacy Sound — this step
+-- is the gate that catches engine-level regressions (Asset vs AudioContent,
+-- Wire parenting, etc.) at PR time.
 step("createPlayer", function()
-	local player = client:createPlayer()
+	-- Picked values exactly representable in float32 (0.5, 0.25) so reads off
+	-- AudioPlayer.Volume round-trip cleanly to the Lua double we set — no
+	-- tolerance check needed.
+	local player = client:createPlayer({ volume = 0.5 })
 	assert(player, "createPlayer returned nil")
 	assert(typeof(player.playTrack) == "function", "player.playTrack is not a function")
+	assert(typeof(player.getAudioPlayer) == "function", "player.getAudioPlayer is not a function (v0.15.0)")
+
+	assert(fixtures.music_asset_id, "needs music_asset_id from browse_trending")
+	player:playTrack({
+		asset_id = fixtures.music_asset_id,
+		name = "smoke",
+		artist = "smoke",
+		album = "smoke",
+		genre = "smoke",
+		duration = 30,
+	})
+
+	-- Give the engine a moment to start decoding the asset.
+	task.wait(2)
+
+	local ap = player:getAudioPlayer()
+	assert(ap, "getAudioPlayer returned nil while a track is queued")
+	assert(ap:IsA("AudioPlayer"), "underlying instance is " .. ap.ClassName .. ", expected AudioPlayer")
+	assert(ap.Asset == "rbxassetid://" .. fixtures.music_asset_id, "AudioPlayer.Asset mismatch: " .. tostring(ap.Asset))
+	assert(ap.IsPlaying, "AudioPlayer.IsPlaying is false after 2s")
+	assert(ap.TimePosition > 0, "AudioPlayer.TimePosition did not advance (got " .. tostring(ap.TimePosition) .. ")")
+	assert(ap.Volume == 0.5, "AudioPlayer.Volume = " .. tostring(ap.Volume) .. ", expected 0.5")
+
+	local wire
+	for _, child in ap:GetChildren() do
+		if child:IsA("Wire") then
+			wire = child
+			break
+		end
+	end
+	assert(wire, "Wire not parented to AudioPlayer")
+	assert(wire.SourceInstance == ap, "Wire.SourceInstance is not the AudioPlayer")
+	assert(
+		wire.TargetInstance and wire.TargetInstance:IsA("AudioDeviceOutput"),
+		"Wire.TargetInstance is not an AudioDeviceOutput"
+	)
+
+	player:setVolume(0.25)
+	assert(ap.Volume == 0.25, "setVolume did not propagate to live AudioPlayer.Volume: " .. tostring(ap.Volume))
+
+	player:stop()
+	assert(player:getAudioPlayer() == nil, "getAudioPlayer should be nil after stop()")
+	assert(player.IsPlaying == false, "IsPlaying should be false after stop()")
+
+	player:destroy()
 	return "ok"
 end)
 

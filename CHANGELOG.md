@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.15.0
+
+### Changed
+
+- **`AudioScapeMusicPlayer` now uses the new Roblox Audio API (`AudioPlayer` + `AudioDeviceOutput` + `Wire`) instead of legacy `Sound`.** Public method surface is unchanged — `queue`, `setQueue`, `clearQueue`, `play`, `stop`, `skip`, `setVolume`, `setPlayerId`, `playTrack`, `destroy`, the `OnTrackChanged` / `OnQueueFinished` callbacks, and the `NowPlaying` / `IsPlaying` / `Queue` fields all behave the same. The internal `AudioPlayer` is now reachable via the new `player:getAudioPlayer()` accessor so consumers can wire effect chains or drive volume tweens through `TweenService`.
+
+### Added
+
+- **`player:getAudioPlayer()`** — returns the current `AudioPlayer` Instance, or `nil` if not playing. Use for `TweenService`-driven volume animation (e.g. lobby-music crossfades) or for wiring custom effect chains (filters, reverbs) downstream of the player's output.
+- **`PlayerOptions.output`** — pass a custom `AudioDeviceOutput` / `AudioEmitter` Instance to opt out of the default auto-created `AudioDeviceOutput`. Useful for spatial setups where the player should feed an `AudioEmitter` on a part instead of a global device output. When omitted, the SDK auto-creates an `AudioDeviceOutput` parented to `options.parent` (defaults to `SoundService`) for the drop-in story.
+
+### Notes
+
+- Requires a Roblox client that supports the new audio API (`AudioPlayer` / `AudioDeviceOutput` / `Wire`). No legacy `Sound` fallback is provided.
+- The auto-created `AudioDeviceOutput` is owned by the player and destroyed in `:destroy()`. A caller-provided `options.output` is left in place on destroy — the caller owns its lifecycle.
+
 ## v0.14.1
 
 ### Changed

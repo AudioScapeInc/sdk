@@ -77,20 +77,65 @@ local function makeWorkspace()
 	}
 end
 
+-- A minimal Instance shim. Stores arbitrary properties and provides the small
+-- set of methods/signals the SDK touches at runtime: Play/Stop/Destroy on
+-- audio instances, and an Ended signal on AudioPlayer. Created instances are
+-- recorded on `Instance.__created` so tests can find them by ClassName without
+-- having to walk a parent's children (the shim doesn't model children).
 local function makeInstance()
-	return {
-		new = function(className: string)
-			local props: { [string]: any } = { ClassName = className }
-			return setmetatable(props, {
-				__index = function(_, k)
-					return rawget(props, k)
+	local created: { any } = {}
+	local InstanceTable: { [string]: any } = {}
+	InstanceTable.__created = created
+
+	local function makeSignal()
+		local handlers: { (...any) -> () } = {}
+		local signal: { [string]: any } = {}
+		signal.Connect = function(_, fn: (...any) -> ())
+			table.insert(handlers, fn)
+			return {
+				Disconnect = function()
+					for i, h in ipairs(handlers) do
+						if h == fn then
+							table.remove(handlers, i)
+							break
+						end
+					end
 				end,
-				__newindex = function(_, k, v)
-					rawset(props, k, v)
-				end,
-			})
-		end,
-	}
+			}
+		end
+		-- Test-only fire hook
+		signal._fire = function(...)
+			for _, h in ipairs(handlers) do
+				h(...)
+			end
+		end
+		return signal
+	end
+
+	InstanceTable.new = function(className: string)
+		local props: { [string]: any } = {
+			ClassName = className,
+			Ended = makeSignal(),
+		}
+		local inst
+		inst = setmetatable(props, {
+			__index = function(_, k)
+				return rawget(props, k)
+			end,
+			__newindex = function(_, k, v)
+				rawset(props, k, v)
+			end,
+		})
+		props.Play = function() end
+		props.Stop = function() end
+		props.Destroy = function()
+			(props :: any)._destroyed = true
+		end
+		table.insert(created, inst)
+		return inst
+	end
+
+	return InstanceTable
 end
 
 local function makeTask()
