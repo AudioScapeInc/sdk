@@ -2,8 +2,12 @@
 --[[
 	AudioScapeMusicPlayer — drop-in audio playback with auto-analytics.
 
-	Manages a queue of tracks, handles Sound lifecycle, and automatically
+	Manages a queue of tracks, handles AudioPlayer lifecycle, and automatically
 	fires play/stop/skip analytics events through the AudioScape client.
+
+	Each track plays through an AudioPlayer wired to an AudioDeviceOutput
+	(auto-created in :new unless the caller passes their own output instance —
+	e.g. an AudioEmitter for spatial audio — via PlayerOptions.output).
 
 	Usage:
 		local player = client:createPlayer()
@@ -32,6 +36,10 @@ export type PlayerOptions = {
 	parent: Instance?,
 	volume: number?,
 	playerId: number?,
+	-- Optional pre-existing audio output (e.g. AudioDeviceOutput or AudioEmitter
+	-- on a part for spatial setups). When omitted, the player auto-creates an
+	-- AudioDeviceOutput parented to `parent`.
+	output: Instance?,
 }
 
 -- Minimal interface for the analytics client dependency.
@@ -52,7 +60,10 @@ export type MusicPlayerInstance = typeof(setmetatable(
 		_playerId: number?,
 		_queue: { Track },
 		_index: number,
-		_sound: Sound?,
+		_output: Instance,
+		_ownsOutput: boolean,
+		_audioPlayer: AudioPlayer?,
+		_wire: Wire?,
 		_playing: boolean,
 		_advancing: boolean,
 		_startedAt: number,
@@ -70,15 +81,31 @@ export type MusicPlayerInstance = typeof(setmetatable(
 
 function AudioScapeMusicPlayer.new(client: AnalyticsClient, options: PlayerOptions?): MusicPlayerInstance
 	local opts: PlayerOptions = options or {}
+	local parent = opts.parent or SoundService
+
+	local output: Instance
+	local ownsOutput: boolean
+	if opts.output then
+		output = opts.output
+		ownsOutput = false
+	else
+		local device = Instance.new("AudioDeviceOutput")
+		device.Parent = parent
+		output = device
+		ownsOutput = true
+	end
 
 	local self = setmetatable({
 		_client = client,
-		_parent = opts.parent or SoundService,
+		_parent = parent,
 		_volume = math.clamp(opts.volume or 0.5, 0, 1),
 		_playerId = opts.playerId,
 		_queue = {},
 		_index = 0,
-		_sound = nil,
+		_output = output,
+		_ownsOutput = ownsOutput,
+		_audioPlayer = nil,
+		_wire = nil,
 		_playing = false,
 		_advancing = false,
 		_startedAt = 0,
@@ -94,9 +121,13 @@ function AudioScapeMusicPlayer.new(client: AnalyticsClient, options: PlayerOptio
 		OnQueueFinished = nil,
 	}, AudioScapeMusicPlayer)
 
-	-- Flush final analytics on game shutdown
-	game:BindToClose(function()
-		self:destroy()
+	-- Flush final analytics on game shutdown. pcall so loading the module
+	-- outside a server context (Studio command bar, plugin contexts) doesn't
+	-- error — the SDK is server-realm but is sometimes exercised elsewhere.
+	pcall(function()
+		game:BindToClose(function()
+			self:destroy()
+		end)
 	end)
 
 	return self
@@ -108,7 +139,10 @@ function AudioScapeMusicPlayer.destroy(self: MusicPlayerInstance)
 		local duration = self:_getListenDuration()
 		self._client:trackStop(self.NowPlaying.asset_id, self._playerId, duration)
 	end
-	self:_cleanupSound()
+	self:_cleanupAudio()
+	if self._ownsOutput and self._output then
+		self._output:Destroy()
+	end
 end
 
 -- Add tracks to the end of the queue.
@@ -165,14 +199,14 @@ end
 
 -- Stop the currently playing track. Fires a stop analytics event.
 function AudioScapeMusicPlayer.stop(self: MusicPlayerInstance)
-	if not self._playing or not self._sound then
+	if not self._playing or not self._audioPlayer then
 		return
 	end
 
 	local duration = self:_getListenDuration()
 	local track = self.NowPlaying
 
-	self:_cleanupSound()
+	self:_cleanupAudio()
 
 	if track then
 		self._client:trackStop(track.asset_id, self._playerId, duration)
@@ -190,7 +224,7 @@ function AudioScapeMusicPlayer.skip(self: MusicPlayerInstance)
 	local duration = self:_getListenDuration()
 	local track = self.NowPlaying
 
-	self:_cleanupSound()
+	self:_cleanupAudio()
 
 	if track then
 		self._client:trackSkip(track.asset_id, self._playerId, duration)
@@ -219,8 +253,8 @@ end
 -- Set playback volume (0 to 1).
 function AudioScapeMusicPlayer.setVolume(self: MusicPlayerInstance, volume: number)
 	self._volume = math.clamp(volume, 0, 1)
-	if self._sound then
-		self._sound.Volume = self._volume
+	if self._audioPlayer then
+		self._audioPlayer.Volume = self._volume
 	end
 end
 
@@ -232,11 +266,19 @@ end
 -- Play a single track immediately, replacing current playback.
 -- Does not affect the queue.
 function AudioScapeMusicPlayer.playTrack(self: MusicPlayerInstance, track: Track)
-	self:_cleanupSound()
+	self:_cleanupAudio()
 	self._queue = { track }
 	self._index = 1
 	self.Queue = self._queue
 	self:_playTrackAtIndex(1)
+end
+
+-- Return the underlying AudioPlayer Instance for the currently playing track,
+-- or nil if nothing is playing. Use for TweenService-driven volume animation
+-- (crossfades) or wiring custom effect chains (filters, reverbs) downstream
+-- of the player's output.
+function AudioScapeMusicPlayer.getAudioPlayer(self: MusicPlayerInstance): AudioPlayer?
+	return self._audioPlayer
 end
 
 --[[ ──────────────────────────────────────────
@@ -249,15 +291,21 @@ function AudioScapeMusicPlayer._playTrackAtIndex(self: MusicPlayerInstance, inde
 		return
 	end
 
-	-- Clean up any existing sound
-	self:_cleanupSound()
+	-- Clean up any existing audio
+	self:_cleanupAudio()
 
-	-- Create new Sound
-	local sound = Instance.new("Sound")
-	sound.SoundId = "rbxassetid://" .. track.asset_id
-	sound.Volume = self._volume
-	sound.Parent = self._parent
-	self._sound = sound
+	-- Create AudioPlayer for this track and wire it to the output
+	local audioPlayer = Instance.new("AudioPlayer")
+	audioPlayer.Asset = "rbxassetid://" .. track.asset_id
+	audioPlayer.Volume = self._volume
+	audioPlayer.Parent = self._parent
+	self._audioPlayer = audioPlayer
+
+	local wire = Instance.new("Wire")
+	wire.SourceInstance = audioPlayer
+	wire.TargetInstance = self._output
+	wire.Parent = audioPlayer
+	self._wire = wire
 
 	-- Update state
 	self._playing = true
@@ -274,7 +322,7 @@ function AudioScapeMusicPlayer._playTrackAtIndex(self: MusicPlayerInstance, inde
 	self._client:trackPlay(track.asset_id, self._playerId, track.duration)
 
 	-- Listen for track end
-	self._endedConnection = sound.Ended:Connect(function()
+	self._endedConnection = audioPlayer.Ended:Connect(function()
 		-- Guard against re-entrant advancement (e.g. skip() already handling this)
 		if self._advancing then
 			return
@@ -283,7 +331,7 @@ function AudioScapeMusicPlayer._playTrackAtIndex(self: MusicPlayerInstance, inde
 
 		local listenDuration = self:_getListenDuration()
 
-		self:_cleanupSound()
+		self:_cleanupAudio()
 
 		-- Track stop (natural end)
 		self._client:trackStop(track.asset_id, self._playerId, listenDuration)
@@ -308,18 +356,22 @@ function AudioScapeMusicPlayer._playTrackAtIndex(self: MusicPlayerInstance, inde
 		end
 	end)
 
-	sound:Play()
+	audioPlayer:Play()
 end
 
-function AudioScapeMusicPlayer._cleanupSound(self: MusicPlayerInstance)
+function AudioScapeMusicPlayer._cleanupAudio(self: MusicPlayerInstance)
 	if self._endedConnection then
 		self._endedConnection:Disconnect()
 		self._endedConnection = nil
 	end
-	if self._sound then
-		self._sound:Stop()
-		self._sound:Destroy()
-		self._sound = nil
+	if self._audioPlayer then
+		self._audioPlayer:Stop()
+		self._audioPlayer:Destroy()
+		self._audioPlayer = nil
+	end
+	if self._wire then
+		self._wire:Destroy()
+		self._wire = nil
 	end
 	self._playing = false
 	self.IsPlaying = false

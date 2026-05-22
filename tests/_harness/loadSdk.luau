@@ -73,7 +73,7 @@ local function loadFile(filePath: string, env: any): any
 	return chunk()
 end
 
-local function loadSdk(opts: LoadOpts): (any, { string })
+local function loadSdk(opts: LoadOpts): (any, { string }, { any })
 	assert(opts and opts.http, "loadSdk requires opts.http (mockHttp or realHttp instance)")
 
 	-- selene: allow(global_usage)
@@ -148,7 +148,7 @@ local function loadSdk(opts: LoadOpts): (any, { string })
 	initEnv.script = rootScript
 	initEnv.require = customRequire
 
-	return loadFile("src/init.luau", initEnv), recordedWarnings
+	return loadFile("src/init.luau", initEnv), recordedWarnings, (Instance :: any).__created
 end
 
 return {
