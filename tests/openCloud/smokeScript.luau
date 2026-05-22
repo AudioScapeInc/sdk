@@ -370,7 +370,10 @@ end)
 -- is the gate that catches engine-level regressions (Asset vs AudioContent,
 -- Wire parenting, etc.) at PR time.
 step("createPlayer", function()
-	local player = client:createPlayer({ volume = 0.4 })
+	-- Picked values exactly representable in float32 (0.5, 0.25) so reads off
+	-- AudioPlayer.Volume round-trip cleanly to the Lua double we set — no
+	-- tolerance check needed.
+	local player = client:createPlayer({ volume = 0.5 })
 	assert(player, "createPlayer returned nil")
 	assert(typeof(player.playTrack) == "function", "player.playTrack is not a function")
 	assert(typeof(player.getAudioPlayer) == "function", "player.getAudioPlayer is not a function (v0.15.0)")
@@ -394,7 +397,7 @@ step("createPlayer", function()
 	assert(ap.Asset == "rbxassetid://" .. fixtures.music_asset_id, "AudioPlayer.Asset mismatch: " .. tostring(ap.Asset))
 	assert(ap.IsPlaying, "AudioPlayer.IsPlaying is false after 2s")
 	assert(ap.TimePosition > 0, "AudioPlayer.TimePosition did not advance (got " .. tostring(ap.TimePosition) .. ")")
-	assert(ap.Volume == 0.4, "AudioPlayer.Volume = " .. tostring(ap.Volume) .. ", expected 0.4")
+	assert(ap.Volume == 0.5, "AudioPlayer.Volume = " .. tostring(ap.Volume) .. ", expected 0.5")
 
 	local wire
 	for _, child in ap:GetChildren() do
@@ -410,8 +413,8 @@ step("createPlayer", function()
 		"Wire.TargetInstance is not an AudioDeviceOutput"
 	)
 
-	player:setVolume(0.7)
-	assert(ap.Volume == 0.7, "setVolume did not propagate to live AudioPlayer.Volume")
+	player:setVolume(0.25)
+	assert(ap.Volume == 0.25, "setVolume did not propagate to live AudioPlayer.Volume: " .. tostring(ap.Volume))
 
 	player:stop()
 	assert(player:getAudioPlayer() == nil, "getAudioPlayer should be nil after stop()")
