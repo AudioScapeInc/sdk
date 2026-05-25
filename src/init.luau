@@ -373,6 +373,10 @@ export type StructureResult = {
 	bpm: number?,
 	track_energy: number?,
 	beat_grid: BeatGrid?,
+	-- Two structural layers, same shape and label set, differing only in
+	-- granularity: `sections` is the finer layer (more, shorter segments),
+	-- `phrases` the coarser (fewer, longer). Align long transitions like
+	-- crossfades to `phrases`; finer cues to `sections`.
 	sections: { Section },
 	phrases: { Section },
 }
@@ -1197,7 +1201,8 @@ function AudioScape.beatAtTime(self: AudioScapeClient, asset_id: string, t: numb
 	}, nil
 end
 
--- Find the section (or phrase) containing time `t`. `level` defaults to "section".
+-- Find the section (or phrase) containing time `t`. `level` defaults to "section"
+-- (the finer layer); pass "phrase" for the coarser groupings.
 function AudioScape.sectionAtTime(
 	self: AudioScapeClient,
 	asset_id: string,

@@ -259,6 +259,9 @@ local structure, err = client:getStructure({
 -- structure = { asset_id, duration, bpm, track_energy, beat_grid, sections, phrases }
 -- structure.beat_grid = { times = { number }, downbeats = { number } }
 -- structure.sections = { { start, end, label, energy, bar_start, bar_end, color } }
+-- structure.phrases  = same shape as sections, but a coarser layer — fewer,
+--                      longer segments. sections are the finer layer (more,
+--                      shorter). Both carry the same label set.
 
 -- Or pull structure straight from the playing Sound:
 local structure = client:getStructure(soundInstance)
@@ -279,7 +282,7 @@ local beat, err = client:beatAtTime("1843209165", currentTime)
 
 ### `client:sectionAtTime(asset_id, t, level?)`
 
-Locate the section (or phrase, with `level = "phrase"`) covering a time. Trigger different effects on Verse vs Drop.
+Locate the section (or phrase, with `level = "phrase"`) covering a time. Trigger different effects on Verse vs Drop. `level` defaults to `"section"` (the finer layer); pass `"phrase"` for the coarser groupings — better for longer transitions like crossfades.
 
 ```lua
 local section = client:sectionAtTime("1843209165", currentTime)
