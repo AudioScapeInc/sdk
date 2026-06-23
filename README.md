@@ -12,7 +12,7 @@ Add to your `wally.toml`:
 
 ```toml
 [server-dependencies]
-AudioScape = "this-fifo/audioscape-sdk@0.15.0"
+AudioScape = "this-fifo/audioscape-sdk@0.16.0"
 ```
 
 Then run:
@@ -115,6 +115,8 @@ prefers `asset_ids` and skips text search. `result.meta.search_method` will be
 `"semantic"` / `"text"` / `"id"` / `"ids-batch"` depending on how the
 request resolved.
 
+**Result ordering:** pass `sort = "popular"` to rank by popularity (most-played first) or `sort = "recent"` for newest-first; omit `sort` (or use `"relevance"`) for the default best-match ordering. `result.meta.sort` echoes the applied ordering. (`sort` is ignored for `asset_ids` lookups.)
+
 ### `client:lookup(options)`
 
 Resolve up to 100 known asset IDs in a single request. Returned tracks are in
@@ -184,6 +186,18 @@ local result, err = client:browse({ type = "trending", limit = 50 })
 
 Trending is a popularity-ranked list of music tracks refreshed daily, capped at 200 entries. Player engagement signals (plays, favorites, votes, queue adds, listen duration, plus custom events) are exponentially decayed over a 60-day window with a 30-day half-life, so recent activity dominates.
 
+**Regional trending:** pass `region` on a `type = "trending"` call to get a list ranked by activity from a single part of the world instead of the global list. Use `region = "auto"` to auto-detect the region from your server's location, or pass an explicit `"americas"`, `"eu"`, or `"apac"`. Omit `region` for the global list (the default).
+
+```lua
+-- Auto-detected regional trending (falls back to global if unavailable)
+local result, err = client:browse({ type = "trending", region = "auto", limit = 50 })
+
+-- Explicit region
+local result, err = client:browse({ type = "trending", region = "eu", limit = 50 })
+```
+
+> Regional trending must be enabled for your API key. Until then, `region` is ignored and you get the global list. Contact us via the [Developer Portal](https://developer.audioscape.ai) to enable it.
+
 ### `client:sfxBrowse(options)`
 
 Browse the SFX catalog. v1 only supports `type = "trending"` — a popularity-ranked list of sound effects, refreshed daily on the same schedule as music trending.
@@ -192,6 +206,10 @@ Browse the SFX catalog. v1 only supports `type = "trending"` — a popularity-ra
 local result, err = client:sfxBrowse({ type = "trending", limit = 50 })
 -- result = { tracks, meta }
 -- result.tracks = { { asset_id, name, description, category, subcategory, tags, duration, ... } }
+
+-- Scope to a region (same options as music trending; requires regional
+-- trending to be enabled for your API key — otherwise the global list)
+local result, err = client:sfxBrowse({ type = "trending", region = "auto", limit = 50 })
 ```
 
 ### `client:sfxSearch(options)`
@@ -214,6 +232,8 @@ local result, err = client:sfxSearch({
 })
 -- result = { tracks, categories, subcategories, meta }
 ```
+
+**Result ordering:** like music search, pass `sort = "popular"` (most-popular first) or `sort = "recent"` (newest first); omit for the default relevance ordering.
 
 ### `client:sfxSimilar(input, extras?)`
 

@@ -32,7 +32,9 @@ musicPlayer.OnTrackChanged = function(track)
 	nowPlaying.Value = if track then string.format("%s — %s", track.artist, track.name) else ""
 end
 
-local result, err = client:browse({ type = "trending", limit = 50 })
+-- `region = "auto"` ranks by activity near this server's location; omit it
+-- (or leave regional trending disabled for your key) to get the global list.
+local result, err = client:browse({ type = "trending", region = "auto", limit = 50 })
 if not result then
 	warn("Trending fetch failed:", err)
 	return
