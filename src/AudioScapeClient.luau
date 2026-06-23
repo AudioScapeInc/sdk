@@ -104,6 +104,8 @@ function AudioScapeClient.search(
 		limit: number?,
 		offset: number?,
 		filters: any?,
+		region: string?,
+		sort: string?,
 	}
 )
 	return invoke(self._remotes, "Search", options)
@@ -152,7 +154,7 @@ end
 -- Search the SFX catalog by free-text query or category browse.
 function AudioScapeClient.sfxSearch(
 	self: AudioScapeClientInstance,
-	options: { query: string?, limit: number?, offset: number?, filters: any? }
+	options: { query: string?, limit: number?, offset: number?, sort: string?, filters: any? }
 )
 	return invoke(self._remotes, "SfxSearch", options)
 end
@@ -197,7 +199,14 @@ end
 -- need fresh uploads instead of engagement ranking.
 function AudioScapeClient.browse(
 	self: AudioScapeClientInstance,
-	options: { type: string, name: string?, limit: number?, offset: number?, sort: string? }
+	options: {
+		type: string,
+		name: string?,
+		limit: number?,
+		offset: number?,
+		sort: string?,
+		region: string?,
+	}
 )
 	return invoke(self._remotes, "Browse", options)
 end
@@ -205,7 +214,7 @@ end
 -- Browse the SFX catalog. v1 only supports type='trending'.
 function AudioScapeClient.sfxBrowse(
 	self: AudioScapeClientInstance,
-	options: { type: string, name: string?, limit: number?, offset: number? }
+	options: { type: string, name: string?, limit: number?, offset: number?, region: string? }
 )
 	return invoke(self._remotes, "SfxBrowse", options)
 end

@@ -40,6 +40,14 @@ export type SearchOptions = {
 	limit: number?,
 	offset: number?,
 	playerId: number?,
+	-- Scope results to a region: "auto" (auto-detect from the server's
+	-- location) or an explicit "americas" | "eu" | "apac". Omit for the
+	-- global list. Requires regional trending to be enabled for your API key.
+	region: string?,
+	-- Result ordering: "relevance" (default — best semantic match), "popular"
+	-- (most-played first), or "recent" (newest first). Omit for relevance.
+	-- Ignored for asset_ids lookups.
+	sort: string?,
 	filters: {
 		-- Each entry accepts the AudioScape canonical name ("Hip Hop / Rap"),
 		-- the URL-safe slug ("hip-hop-rap"), or a legacy Roblox music_genre
@@ -85,6 +93,9 @@ export type SfxSearchOptions = {
 	limit: number?,
 	offset: number?,
 	playerId: number?,
+	-- Result ordering: "relevance" (default), "popular" (most-popular first),
+	-- or "recent" (newest first). Omit for relevance.
+	sort: string?,
 	filters: {
 		categories: { string }?,
 		subcategories: { string }?,
@@ -177,6 +188,11 @@ export type BrowseOptions = {
 	limit: number?,
 	offset: number?,
 	playerId: number?,
+	-- Scope a trending list to a region: "auto" (auto-detect from the
+	-- server's location) or an explicit "americas" | "eu" | "apac". Omit for
+	-- the global list. Only affects type = "trending"; requires regional
+	-- trending to be enabled for your API key.
+	region: string?,
 }
 
 export type SfxBrowseOptions = {
@@ -185,6 +201,10 @@ export type SfxBrowseOptions = {
 	limit: number?,
 	offset: number?,
 	playerId: number?,
+	-- Scope a trending list to a region: "auto" (auto-detect from the
+	-- server's location) or an explicit "americas" | "eu" | "apac". Omit for
+	-- the global list. Requires regional trending to be enabled for your API key.
+	region: string?,
 }
 
 export type Track = {
@@ -949,6 +969,8 @@ function AudioScape.search(self: AudioScapeClient, options: SearchOptions): (Sea
 		limit = options.limit,
 		offset = options.offset,
 		filters = options.filters,
+		region = options.region,
+		sort = options.sort,
 	}
 	if hasQuery then
 		body.query = options.query
@@ -1017,6 +1039,7 @@ function AudioScape.sfxSearch(self: AudioScapeClient, options: SfxSearchOptions)
 		query = options.query,
 		limit = options.limit,
 		offset = options.offset,
+		sort = options.sort,
 		filters = options.filters,
 	}
 
@@ -1071,6 +1094,7 @@ function AudioScape.browse(
 		limit = options.limit,
 		offset = options.offset,
 		sort = options.sort,
+		region = options.region,
 	}, options.playerId)
 end
 
@@ -1088,6 +1112,7 @@ function AudioScape.sfxBrowse(self: AudioScapeClient, options: SfxBrowseOptions)
 		name = options.name,
 		limit = options.limit,
 		offset = options.offset,
+		region = options.region,
 	}, options.playerId)
 end
 
@@ -1292,6 +1317,8 @@ function AudioScape.enableClientAccess(self: AudioScapeClient)
 			limit = options.limit,
 			offset = options.offset,
 			filters = options.filters,
+			region = options.region,
+			sort = options.sort,
 			playerId = player.UserId,
 		})
 	end)
@@ -1330,6 +1357,7 @@ function AudioScape.enableClientAccess(self: AudioScapeClient)
 			query = options.query,
 			limit = options.limit,
 			offset = options.offset,
+			sort = options.sort,
 			filters = options.filters,
 			playerId = player.UserId,
 		})
@@ -1371,6 +1399,7 @@ function AudioScape.enableClientAccess(self: AudioScapeClient)
 			limit = options.limit,
 			offset = options.offset,
 			sort = options.sort,
+			region = options.region,
 			playerId = player.UserId,
 		})
 	end)
@@ -1387,6 +1416,7 @@ function AudioScape.enableClientAccess(self: AudioScapeClient)
 			name = options.name,
 			limit = options.limit,
 			offset = options.offset,
+			region = options.region,
 			playerId = player.UserId,
 		})
 	end)

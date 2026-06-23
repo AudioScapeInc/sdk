@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.16.0
+
+### Added
+
+- **`region` option on `client:browse` and `client:sfxBrowse` trending lists.** Pass `region` on a `type = "trending"` call to get a list ranked by activity from a single part of the world instead of the global list. Accepts `"auto"` (auto-detect from the server's location) or an explicit `"americas"`, `"eu"`, or `"apac"`. Omit `region` for the global list (the default), so existing call sites are unchanged. Also accepted on `client:search` for region-scoped results.
+  - Regional trending must be enabled for your API key. Until then, `region` is ignored and you get the global list — no error, no breakage.
+  - Mirrored on `AudioScapeClient` (LocalScript-side) over the existing `Browse`, `SfxBrowse`, and `Search` RemoteFunctions; the server forwards the field unchanged.
+- **`sort` option on `client:search` and `client:sfxSearch`.** Pass `sort = "popular"` to order results by popularity (most-played) or `sort = "recent"` for newest-first, instead of the default `"relevance"` (best semantic match). Omit `sort` for relevance, so existing call sites are unchanged. `result.meta.sort` echoes the applied ordering. Mirrored on `AudioScapeClient` over the `Search` / `SfxSearch` RemoteFunctions.
+
 ## v0.15.0
 
 ### Changed
