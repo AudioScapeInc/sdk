@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.17.0
+
+### Added
+
+- **`client:getAssetService()` — a drop-in stand-in for `game:GetService("AssetService")`.** Existing `AssetService:SearchAudioAsync(params)` call sites work unchanged: same `AudioSearchParams` in, same `AudioPages` out (`GetCurrentPage`, `AdvanceToNextPageAsync`, `IsFinished`), same raise-on-failure behaviour. Search runs against AudioScape's catalog, so results are matched on meaning rather than keywords. `AudioSubType` routes the call — `Music` searches music, `SoundEffect` searches SFX. The deprecated `SearchAudio` alias is supported too.
+  - **Every member we don't override forwards to the real `AssetService`**, so `GetAudioMetadataAsync`, `CreateEditableImage`, `GetBundleDetailsAsync` and the rest behave exactly as before. The shim is a complete stand-in, not a two-method object.
+  - `AudioSearchParams` mapping: `SearchKeyword`/`Title`/`Artist`/`Album` combine into the semantic query; `Tag` becomes a genre filter (music) or category filter (SFX), and doubles as the query when nothing else is set; `MinDuration`/`MaxDuration` become a duration filter.
+  - Results carry every native field plus `AssetId` (string form), `Score`, `Genre`, `GenreSlug`, and `Bpm`. `IsEndorsed` is always `false` — it's Roblox's own endorsement flag, which AudioScape doesn't track; the field is present so code reading it keeps working.
+  - `options.fallback` (default `true`) falls through to the real `AssetService:SearchAudioAsync` when an AudioScape request fails, so swapping the service in can't leave a caller worse off than native. `options.limit` (default `30`) matches native's page size.
+  - Mirrored on `AudioScapeClient` (LocalScript-side) as `client:getAssetService()`, over a new `SearchAudio` RemoteFunction. `HttpService` is server-only, so the request and the result mapping both happen server-side.
+
+### Notes
+
+- `AudioSearchParams` signals "unset" with sentinel values rather than `nil`: strings default to `""`, `MinDuration` to `0`, `MaxDuration` to `2147483647` (int32 max), and `AudioSubType` to `Music`. Verified against a live engine; the mapping treats each sentinel as absent so no phantom filters reach the API.
+- Native `SearchAudioAsync` returns 30 results per page. That isn't documented anywhere, so it's asserted in the Open Cloud smoke to catch a change.
+
 ## v0.16.0
 
 ### Added

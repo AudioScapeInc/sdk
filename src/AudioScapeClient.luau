@@ -229,6 +229,123 @@ function AudioScapeClient.listPlaylists(self: AudioScapeClientInstance)
 	return invoke(self._remotes, "ListPlaylists")
 end
 
+-- Native SearchAudioAsync returns 30 results per page; match it so paging
+-- through the shim behaves the same as paging through the real service.
+local NATIVE_AUDIO_PAGE_SIZE = 30
+
+-- Mirrors AssetServiceOptions in src/init.luau.
+export type AssetServiceOptions = {
+	-- When the AudioScape request fails, fall through to the real
+	-- AssetService:SearchAudioAsync instead of erroring. On by default.
+	fallback: boolean?,
+	-- Results per page. Defaults to native's 30.
+	limit: number?,
+}
+
+-- An AudioSearchParams Instance can't cross a RemoteFunction by reference, so
+-- read its properties into a plain table. AudioSubType travels as its Name —
+-- the server accepts either form.
+local function paramsToTable(params: any): { [string]: any }
+	if type(params) == "table" then
+		return params
+	end
+	local subType = params.AudioSubType
+	return {
+		SearchKeyword = params.SearchKeyword,
+		Title = params.Title,
+		Artist = params.Artist,
+		Album = params.Album,
+		Tag = params.Tag,
+		MinDuration = params.MinDuration,
+		MaxDuration = params.MaxDuration,
+		AudioSubType = if typeof(subType) == "EnumItem" then subType.Name else tostring(subType),
+	}
+end
+
+-- Client-side drop-in for game:GetService("AssetService"). SearchAudioAsync
+-- goes through the SearchAudio remote (HttpService is server-only, so the
+-- request and the result mapping both live there); every other member forwards
+-- to the real service. Mirrors AudioScape.getAssetService in src/init.luau —
+-- kept duplicated rather than shared to avoid adding a file to the wally
+-- package, same trade-off as resolveAssetId above.
+function AudioScapeClient.getAssetService(self: AudioScapeClientInstance, options: AssetServiceOptions?)
+	local opts: AssetServiceOptions = options or {}
+	local useFallback = opts.fallback ~= false
+	local pageSize = opts.limit or NATIVE_AUDIO_PAGE_SIZE
+	local remotes = self._remotes
+
+	local shim = {} :: any
+
+	function shim.SearchAudioAsync(_, params: any): any
+		local isInstance = typeof(params) == "Instance"
+		assert(isInstance or type(params) == "table", "SearchAudioAsync requires an AudioSearchParams")
+		local payload = paramsToTable(params)
+
+		local lastError: string? = nil
+		local function fetchPage(offset: number): ({ any }, number)
+			local result, err = invoke(remotes, "SearchAudio", payload, offset, pageSize)
+			if not result then
+				lastError = err or "search failed"
+				error(lastError, 0)
+			end
+			return result.page or {}, tonumber(result.total) or 0
+		end
+
+		local ok, pagesOrErr = pcall(function()
+			local offset = 0
+			local page, total = fetchPage(offset)
+
+			local pages = {} :: any
+			pages.IsFinished = #page == 0 or (offset + #page) >= total
+
+			function pages.GetCurrentPage(): { any }
+				return page
+			end
+
+			function pages.AdvanceToNextPageAsync()
+				assert(not pages.IsFinished, "AudioPages: no more pages to advance to")
+				offset += pageSize
+				page, total = fetchPage(offset)
+				pages.IsFinished = #page == 0 or (offset + #page) >= total
+			end
+
+			return pages
+		end)
+
+		if ok then
+			return pagesOrErr
+		end
+
+		-- AssetService:SearchAudioAsync carries no security context, so the
+		-- client can fall back to it directly.
+		if useFallback and isInstance then
+			local nativeOk, native = pcall(function()
+				return game:GetService("AssetService"):SearchAudioAsync(params)
+			end)
+			if nativeOk then
+				return native
+			end
+		end
+
+		error(tostring(lastError or pagesOrErr), 0)
+	end
+
+	shim.SearchAudio = shim.SearchAudioAsync
+
+	return setmetatable(shim, {
+		__index = function(_, key: any): any
+			local realService = game:GetService("AssetService")
+			local member = (realService :: any)[key]
+			if type(member) == "function" then
+				return function(_, ...)
+					return member(realService, ...)
+				end
+			end
+			return member
+		end,
+	})
+end
+
 -- Fetch beat grid + section structure for a track (beat-sync animations,
 -- lighting cues). Polymorphic input — see similar() for the (input, extras?)
 -- contract.

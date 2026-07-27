@@ -12,7 +12,7 @@ Add to your `wally.toml`:
 
 ```toml
 [server-dependencies]
-AudioScape = "this-fifo/audioscape-sdk@0.16.0"
+AudioScape = "this-fifo/audioscape-sdk@0.17.0"
 ```
 
 Then run:
@@ -341,6 +341,57 @@ if result then
 end
 ```
 
+## Drop-in for `AssetService`
+
+If you already call `AssetService:SearchAudioAsync`, you can point it at AudioScape by changing one line. The `AudioSearchParams` you build and the `AudioPages` you iterate stay exactly the same.
+
+```lua
+-- Before
+local AssetService = game:GetService("AssetService")
+
+-- After
+local AssetService = client:getAssetService()
+
+-- Unchanged from here down
+local params = Instance.new("AudioSearchParams")
+params.SearchKeyword = "calm ambient"
+
+local ok, pages = pcall(function()
+    return AssetService:SearchAudioAsync(params)
+end)
+if ok then
+    for _, audio in pages:GetCurrentPage() do
+        print(audio.Title, "—", audio.Artist, audio.Duration .. "s")
+    end
+end
+```
+
+### `client:getAssetService(options?)`
+
+Returns a stand-in for `AssetService`. `SearchAudioAsync` (and its deprecated `SearchAudio` alias) runs against AudioScape's catalog; **every other member forwards to the real service**, so unrelated calls like `GetAudioMetadataAsync`, `CreateEditableImage`, or `GetBundleDetailsAsync` behave exactly as before.
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `fallback` | `boolean?` | `true` | On an AudioScape error, fall through to the real `AssetService:SearchAudioAsync` instead of raising. Leave it on unless you'd rather see failures. |
+| `limit` | `number?` | `30` | Results per page. Matches native's page size by default. |
+
+**How `AudioSearchParams` maps.** `AudioSubType` picks the catalog — `Music` searches music, `SoundEffect` searches SFX. `SearchKeyword`, `Title`, `Artist`, and `Album` combine into the semantic query (AudioScape matches on meaning, not just keywords, and already handles artist matching). `Tag` becomes a genre filter for music or a category filter for SFX, and stands in as the query if you set nothing else. `MinDuration` / `MaxDuration` become a duration filter.
+
+**Results** carry every field native returns — `Id`, `Title`, `Artist`, `Description`, `Duration`, `Tags`, `AudioType`, `IsEndorsed`, `CreateTime`, `UpdateTime`, and `Creator` — plus extra AudioScape fields native has no equivalent for:
+
+| Field | Description |
+| --- | --- |
+| `AssetId` | The asset ID as a string, ready for `"rbxassetid://" .. audio.AssetId` |
+| `Score` | Relevance score for the query (0–1) |
+| `Genre` / `GenreSlug` | Canonical genre and its URL-safe slug (music only) |
+| `Bpm` | Tempo, when known (music only) |
+
+`IsEndorsed` is always `false` — that's Roblox's own endorsement flag and AudioScape doesn't track it. The field is present so code that reads it keeps working.
+
+Pagination works as usual: `pages:GetCurrentPage()`, `pages:AdvanceToNextPageAsync()`, and `pages.IsFinished`. Like native, `SearchAudioAsync` raises on failure rather than returning an error — wrap it in `pcall`.
+
+This also works from a LocalScript via `AudioScapeClient:getAssetService()` once you've called `client:enableClientAccess()` on the server.
+
 ## Music Player
 
 The `AudioScapeMusicPlayer` manages audio playback — queue tracks, play, skip — and automatically fires `trackPlay`, `trackStop`, and `trackSkip` analytics events with accurate listen durations.
@@ -570,6 +621,7 @@ See the [`examples/`](examples/) folder for complete usage examples:
 - **StructureBeatSync.luau** — Schedule particle bursts on downbeats and punch the camera FOV on Drops
 - **TrendingLobbyJukebox.luau** — Drop-in lobby music from `browse({ type = "trending" })` piped through the music player
 - **TrendingSfxBoard.luau** — Lobby sound board built from `sfxBrowse({ type = "trending" })`
+- **AssetServiceDropIn.luau** — Point existing `AssetService:SearchAudioAsync` code at AudioScape by changing one line
 
 ## Links
 

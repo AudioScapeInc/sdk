@@ -1250,6 +1250,355 @@ function AudioScape.sectionAtTime(
 end
 
 --[[ ──────────────────────────────────────────
+     AssetService drop-in
+     ────────────────────────────────────────── ]]
+
+-- Maps AudioSearchParams -> our catalog and AudioPages -> our results, so an
+-- existing `AssetService:SearchAudioAsync(params)` call site works unchanged
+-- against AudioScape. Only SearchAudioAsync/SearchAudio are overridden;
+-- everything else forwards to the real service (see getAssetService).
+
+-- AudioSearchParams signals "unset" with sentinels rather than nil: strings
+-- default to "", MinDuration to 0, MaxDuration to int32 max, AudioSubType to
+-- Music. Verified against a live engine — treating MaxDuration's sentinel as a
+-- real value would attach a meaningless duration ceiling to every request.
+local AUDIO_SEARCH_MAX_DURATION_UNSET = 2147483647
+
+-- Native SearchAudioAsync returns 30 results per page. Match it so paging
+-- through the shim behaves the same as paging through the real thing.
+local NATIVE_AUDIO_PAGE_SIZE = 30
+
+export type AudioResult = {
+	Id: number,
+	Title: string,
+	Artist: string,
+	Description: string,
+	Duration: number,
+	Tags: { string },
+	AudioType: string,
+	IsEndorsed: boolean,
+	CreateTime: string,
+	UpdateTime: string,
+	Creator: {
+		Id: number,
+		Name: string,
+		Type: number,
+		IsVerifiedCreator: boolean,
+	},
+	-- Additive AudioScape fields. Native has no equivalent, and adding keys
+	-- can't break a consumer that only reads the native ones.
+	AssetId: string,
+	Score: number?,
+	Genre: string?,
+	GenreSlug: string?,
+	Bpm: number?,
+}
+
+export type AudioScapeAudioPages = {
+	IsFinished: boolean,
+	GetCurrentPage: (self: AudioScapeAudioPages) -> { AudioResult },
+	AdvanceToNextPageAsync: (self: AudioScapeAudioPages) -> (),
+}
+
+export type AssetServiceOptions = {
+	-- When an AudioScape request fails, fall through to the real
+	-- AssetService:SearchAudioAsync instead of erroring. On by default: the
+	-- swap should never leave a caller worse off than native.
+	fallback: boolean?,
+	-- Results per page. Defaults to native's 30.
+	limit: number?,
+}
+
+local function emptyToNil(value: any): string?
+	if type(value) == "string" and #value > 0 then
+		return value
+	end
+	return nil
+end
+
+-- Accepts a real AudioSearchParams Instance or a plain table with the same
+-- field names — the client bridge sends the latter across a RemoteFunction,
+-- where Instances can't be passed by reference.
+local function paramsToOptions(params: any, limit: number, offset: number): ({ [string]: any }, boolean)
+	local subType = params.AudioSubType
+	local subTypeName = if typeof(subType) == "EnumItem" then subType.Name else tostring(subType)
+	local isSfx = subTypeName == "SoundEffect"
+
+	-- Neither endpoint has a title or album filter, and artist matching is
+	-- already folded into /v1/search — so these join the query text rather
+	-- than being silently dropped.
+	local queryParts: { string } = {}
+	for _, field in { "SearchKeyword", "Title", "Artist", "Album" } do
+		local value = emptyToNil(params[field])
+		if value then
+			table.insert(queryParts, value)
+		end
+	end
+
+	local tag = emptyToNil(params.Tag)
+	-- A Tag-only search is legitimate on the native API. We can't run a
+	-- semantic search with no text, so the tag doubles as the query.
+	if #queryParts == 0 and tag then
+		table.insert(queryParts, tag)
+	end
+
+	local minDuration = tonumber(params.MinDuration) or 0
+	local maxDuration = tonumber(params.MaxDuration) or AUDIO_SEARCH_MAX_DURATION_UNSET
+	local hasMin = minDuration > 0
+	local hasMax = maxDuration > 0 and maxDuration < AUDIO_SEARCH_MAX_DURATION_UNSET
+
+	local filters: { [string]: any }? = nil
+	if hasMin or hasMax then
+		filters = {
+			duration = {
+				min = if hasMin then minDuration else nil,
+				max = if hasMax then maxDuration else nil,
+			},
+		}
+	end
+	if tag then
+		local withTag: { [string]: any } = filters or {}
+		if isSfx then
+			withTag.categories = { tag }
+		else
+			withTag.genres = { tag }
+		end
+		filters = withTag
+	end
+
+	return {
+		query = if #queryParts > 0 then table.concat(queryParts, " ") else nil,
+		limit = limit,
+		offset = offset,
+		filters = filters,
+	},
+		isSfx
+end
+
+local function mapTrackToAudioResult(track: any): AudioResult
+	local tags: { string } = {}
+	if type(track.genre) == "string" and #track.genre > 0 then
+		table.insert(tags, track.genre)
+	end
+
+	return {
+		Id = tonumber(track.asset_id) or 0,
+		Title = track.name or "",
+		Artist = track.artist or "",
+		Description = "",
+		Duration = track.duration or 0,
+		Tags = tags,
+		-- Native returns AudioType as a plain string here. GetAudioMetadataAsync
+		-- returns the EnumItem instead — the two engine APIs disagree, so match
+		-- whichever one is being stood in for rather than normalising.
+		AudioType = "Music",
+		-- Roblox's own endorsement flag. We don't ingest it and won't invent a
+		-- value, but native always returns the field, so omitting it would
+		-- break strictly-typed consumers.
+		IsEndorsed = false,
+		CreateTime = track.created_at or "",
+		UpdateTime = track.updated_at or "",
+		Creator = {
+			-- /v1/search returns creator_name for music but no creator_id.
+			Id = tonumber(track.creator_id) or 0,
+			Name = track.creator_name or "",
+			Type = 1,
+			IsVerifiedCreator = false,
+		},
+		AssetId = track.asset_id,
+		Score = track.score,
+		Genre = track.genre,
+		GenreSlug = track.genre_slug,
+		Bpm = track.bpm,
+	}
+end
+
+local function mapSfxToAudioResult(track: any): AudioResult
+	local tags: { string } = {}
+	local seen: { [string]: boolean } = {}
+	local function addTag(value: any)
+		if type(value) == "string" then
+			local trimmed = string.match(value, "^%s*(.-)%s*$")
+			if trimmed and #trimmed > 0 and not seen[trimmed] then
+				seen[trimmed] = true
+				table.insert(tags, trimmed)
+			end
+		end
+	end
+
+	addTag(track.category)
+	addTag(track.subcategory)
+	-- SfxTrack.tags is a delimited string rather than an array. Split on commas
+	-- and fall back to treating the whole value as a single tag.
+	if type(track.tags) == "string" then
+		for part in string.gmatch(track.tags, "[^,]+") do
+			addTag(part)
+		end
+	end
+
+	return {
+		Id = tonumber(track.asset_id) or 0,
+		Title = track.name or "",
+		Artist = track.creator_name or "",
+		Description = track.description or "",
+		Duration = track.duration or 0,
+		Tags = tags,
+		AudioType = "SoundEffect",
+		IsEndorsed = false,
+		CreateTime = track.created_at or "",
+		UpdateTime = track.updated_at or "",
+		Creator = {
+			Id = tonumber(track.creator_id) or 0,
+			Name = track.creator_name or "",
+			Type = 1,
+			IsVerifiedCreator = false,
+		},
+		AssetId = track.asset_id,
+		Score = track.score,
+	}
+end
+
+-- Shared by the server shim and the client bridge: turns a raw search result
+-- into the native page shape. Returns the mapped page plus the total, so the
+-- caller can decide whether more pages remain.
+local function mapSearchResultToPage(result: any, isSfx: boolean): ({ AudioResult }, number)
+	local page: { AudioResult } = {}
+	for _, track in (result.tracks or {}) do
+		table.insert(page, if isSfx then mapSfxToAudioResult(track) else mapTrackToAudioResult(track))
+	end
+	local total = (result.meta and tonumber(result.meta.total)) or #page
+	return page, total
+end
+
+-- Builds the AudioPages stand-in. `fetchPage(offset)` must return
+-- (page, total) or raise — matching native, which throws rather than
+-- returning an error value.
+local function createAudioPages(
+	fetchPage: (number) -> ({ AudioResult }, number),
+	pageSize: number
+): AudioScapeAudioPages
+	local offset = 0
+	local page, total = fetchPage(offset)
+
+	local pages = {} :: any
+	pages.IsFinished = #page == 0 or (offset + #page) >= total
+
+	function pages.GetCurrentPage(): { AudioResult }
+		return page
+	end
+
+	function pages.AdvanceToNextPageAsync()
+		assert(not pages.IsFinished, "AudioPages: no more pages to advance to")
+		offset += pageSize
+		page, total = fetchPage(offset)
+		pages.IsFinished = #page == 0 or (offset + #page) >= total
+	end
+
+	return pages :: AudioScapeAudioPages
+end
+
+-- Drop-in stand-in for game:GetService("AssetService").
+--
+--   local AssetService = client:getAssetService()
+--   local params = Instance.new("AudioSearchParams")
+--   params.SearchKeyword = "chill lofi"
+--   local pages = AssetService:SearchAudioAsync(params)
+--
+-- SearchAudioAsync runs against AudioScape's semantic catalog; AudioSubType
+-- routes to the music or SFX index. Every other member forwards to the real
+-- AssetService, so swapping the service in leaves unrelated calls untouched.
+function AudioScape.getAssetService(self: AudioScapeClient, options: AssetServiceOptions?)
+	local opts: AssetServiceOptions = options or {}
+	local useFallback = opts.fallback ~= false
+	local pageSize = opts.limit or NATIVE_AUDIO_PAGE_SIZE
+
+	local shim = {} :: any
+
+	function shim.SearchAudioAsync(_, params: any): AudioScapeAudioPages
+		local isInstance = typeof(params) == "Instance"
+		assert(isInstance or type(params) == "table", "SearchAudioAsync requires an AudioSearchParams")
+
+		local function nativePages(): AudioScapeAudioPages?
+			if not (useFallback and isInstance) then
+				return nil
+			end
+			local ok, result = pcall(function()
+				return game:GetService("AssetService"):SearchAudioAsync(params)
+			end)
+			if ok then
+				return result :: any
+			end
+			return nil
+		end
+
+		local lastError: string? = nil
+		local function fetchPage(offset: number): ({ AudioResult }, number)
+			local searchOptions, isSfx = paramsToOptions(params, pageSize, offset)
+			if not searchOptions.query then
+				lastError = "SearchAudioAsync requires SearchKeyword, Title, Artist, Album, or Tag to be set"
+				error(lastError, 0)
+			end
+
+			local result: any, err: string?
+			if isSfx then
+				result, err = AudioScape.sfxSearch(self, searchOptions :: any)
+			else
+				result, err = AudioScape.search(self, searchOptions :: any)
+			end
+			if not result then
+				lastError = err or "search failed"
+				error(lastError, 0)
+			end
+
+			local page, total = mapSearchResultToPage(result, isSfx)
+			AudioScape.trackCustom(self, "search_shim", nil, nil, {
+				query = string.sub(searchOptions.query :: string, 1, 256),
+				sub_type = if isSfx then "SoundEffect" else "Music",
+				result_count = #page,
+				offset = offset,
+			})
+			return page, total
+		end
+
+		local ok, pages = pcall(createAudioPages, fetchPage, pageSize)
+		if ok then
+			return pages
+		end
+
+		local native = nativePages()
+		if native then
+			AudioScape.trackCustom(self, "search_fallback", nil, nil, {
+				reason = string.sub(tostring(lastError or pages), 1, 256),
+			})
+			return native
+		end
+
+		error(tostring(lastError or pages), 0)
+	end
+
+	-- Deprecated engine alias, still used by plenty of existing code.
+	shim.SearchAudio = shim.SearchAudioAsync
+
+	-- Forward anything we don't override — CreateEditableImage,
+	-- GetAudioMetadataAsync, GetBundleDetailsAsync and friends — so this is a
+	-- complete stand-in rather than a two-method object. Passing
+	-- GetAudioMetadataAsync straight through also means callers keep the fields
+	-- the engine returns that we don't hold.
+	return setmetatable(shim, {
+		__index = function(_, key: any): any
+			local realService = game:GetService("AssetService")
+			local member = (realService :: any)[key]
+			if type(member) == "function" then
+				return function(_, ...)
+					return member(realService, ...)
+				end
+			end
+			return member
+		end,
+	})
+end
+
+--[[ ──────────────────────────────────────────
      Music Player
      ────────────────────────────────────────── ]]
 
@@ -1321,6 +1670,40 @@ function AudioScape.enableClientAccess(self: AudioScapeClient)
 			sort = options.sort,
 			playerId = player.UserId,
 		})
+	end)
+
+	-- Backs AudioScapeClient:getAssetService(). The client can't hand an
+	-- AudioSearchParams Instance across a RemoteFunction, so it sends the
+	-- property values as a table and receives an already-mapped page — that
+	-- keeps the result mapping in one place instead of duplicating it client-side.
+	createRemote("SearchAudio", function(player: Player, params: any, offset: any, limit: any)
+		if not checkRateLimit(player) then
+			return nil, "Rate limited — please wait before making another request"
+		end
+		if type(params) ~= "table" then
+			return nil, "searchAudio requires an AudioSearchParams-shaped table"
+		end
+
+		local pageSize = math.clamp(tonumber(limit) or NATIVE_AUDIO_PAGE_SIZE, 1, 100)
+		local pageOffset = math.max(tonumber(offset) or 0, 0)
+		local searchOptions, isSfx = paramsToOptions(params, pageSize, pageOffset)
+		if not searchOptions.query then
+			return nil, "SearchAudioAsync requires SearchKeyword, Title, Artist, Album, or Tag to be set"
+		end
+		searchOptions.playerId = player.UserId
+
+		local result: any, err: string?
+		if isSfx then
+			result, err = self:sfxSearch(searchOptions :: any)
+		else
+			result, err = self:search(searchOptions :: any)
+		end
+		if not result then
+			return nil, err
+		end
+
+		local page, total = mapSearchResultToPage(result, isSfx)
+		return { page = page, total = total }
 	end)
 
 	createRemote("Similar", function(player: Player, options: any)
@@ -1474,6 +1857,11 @@ if _G.__AUDIOSCAPE_TEST then
 		formatError = formatError,
 		buildQuery = buildQuery,
 		resolveAssetId = resolveAssetId,
+		paramsToOptions = paramsToOptions,
+		mapTrackToAudioResult = mapTrackToAudioResult,
+		mapSfxToAudioResult = mapSfxToAudioResult,
+		mapSearchResultToPage = mapSearchResultToPage,
+		createAudioPages = createAudioPages,
 	}
 end
 

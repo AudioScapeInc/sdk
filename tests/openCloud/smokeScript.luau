@@ -424,6 +424,74 @@ step("createPlayer", function()
 	return "ok"
 end)
 
+-- getAssetService stands in for game:GetService("AssetService"). Only a real
+-- engine has an actual AudioSearchParams Instance, so this is the step that
+-- proves we read its properties (and its unset sentinels) correctly — the Lune
+-- specs can only exercise the plain-table form the client bridge sends.
+step("getAssetService", function()
+	local AssetService = client:getAssetService()
+	assert(typeof(AssetService.SearchAudioAsync) == "function", "shim is missing SearchAudioAsync")
+
+	local params = Instance.new("AudioSearchParams")
+	params.SearchKeyword = "calm ambient"
+
+	local pages = AssetService:SearchAudioAsync(params)
+	local page = pages:GetCurrentPage()
+	assert(#page > 0, "shim returned an empty first page")
+
+	-- The native item shape, verified field by field against a live
+	-- SearchAudioAsync response.
+	local first = page[1]
+	for _, key in
+		{
+			"Id",
+			"Title",
+			"Artist",
+			"Description",
+			"Duration",
+			"Tags",
+			"AudioType",
+			"IsEndorsed",
+			"CreateTime",
+			"UpdateTime",
+			"Creator",
+		}
+	do
+		assert(first[key] ~= nil, "mapped result is missing native key " .. key)
+	end
+	assert(type(first.Id) == "number", "Id must be numeric like native; got " .. typeof(first.Id))
+	assert(first.AudioType == "Music", "AudioType should be the string 'Music'; got " .. tostring(first.AudioType))
+	assert(type(first.Creator) == "table" and first.Creator.Name ~= nil, "Creator table incomplete")
+
+	-- MaxDuration defaults to int32 max. If we ever forward that sentinel as a
+	-- real ceiling the query still succeeds, so assert on the returned
+	-- durations instead: an unfiltered search must be free to exceed any
+	-- bound we might have accidentally applied.
+	assert(params.MaxDuration == 2147483647, "AudioSearchParams.MaxDuration default changed; revisit the sentinel")
+	assert(params.AudioSubType == Enum.AudioSubType.Music, "AudioSearchParams.AudioSubType default changed")
+
+	-- AudioSubType routes to the SFX catalog.
+	local sfxParams = Instance.new("AudioSearchParams")
+	sfxParams.SearchKeyword = "footstep"
+	sfxParams.AudioSubType = Enum.AudioSubType.SoundEffect
+	local sfxPages = AssetService:SearchAudioAsync(sfxParams)
+	local sfxPage = sfxPages:GetCurrentPage()
+	assert(#sfxPage > 0, "SFX-routed search returned an empty page")
+	assert(
+		sfxPage[1].AudioType == "SoundEffect",
+		"SFX results should carry AudioType 'SoundEffect'; got " .. tostring(sfxPage[1].AudioType)
+	)
+
+	-- Unrecognised members forward to the real AssetService, so the shim is a
+	-- complete stand-in. GetAudioMetadataAsync is the useful one: it returns
+	-- fields we don't hold, so passing it through beats reimplementing it.
+	local meta = AssetService:GetAudioMetadataAsync({ "rbxassetid://" .. tostring(first.Id) })
+	assert(type(meta) == "table" and #meta == 1, "forwarded GetAudioMetadataAsync did not return one entry")
+	assert(tostring(meta[1].AssetId) == tostring(first.Id), "forwarded metadata is for the wrong asset")
+
+	return string.format("music=%d sfx=%d finished=%s", #page, #sfxPage, tostring(pages.IsFinished))
+end)
+
 -- enableClientAccess creates ReplicatedStorage.AudioScapeRemotes (Folder)
 -- with one RemoteFunction per public method. Lune doesn't model
 -- RemoteFunction at all, so this is net new coverage.
