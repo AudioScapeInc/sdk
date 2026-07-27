@@ -4,6 +4,7 @@ local HttpService = game:GetService("HttpService")
 local RunService = game:GetService("RunService")
 
 local AudioScapeMusicPlayer = require(script.AudioScapeMusicPlayer)
+local AudioScapeSoundBank = require(script.AudioScapeSoundBank)
 
 local DEFAULT_BASE_URL = "https://api.audioscape.ai/developer"
 local DEFAULT_ANALYTICS_URL = "https://api.audioscape.ai/analytics"
@@ -1871,6 +1872,34 @@ function AudioScape.auditAudio(self: AudioScapeInstance, options: AudioAuditOpti
 		},
 	},
 		nil
+end
+
+--[[ ──────────────────────────────────────────
+     Sound Bank
+     ────────────────────────────────────────── ]]
+
+export type SoundBankOptions = AudioScapeSoundBank.SoundBankOptions
+
+-- Expand asset IDs you already use into pools of related ones, so repeated
+-- sounds stop reading as the same clip over and over.
+--
+--   local bank = AudioScape:createSoundBank({
+--       seeds = { footstep = "rbxassetid://1837879082" },
+--   })
+--   bank:resolveAsync()
+--   sound.SoundId = "rbxassetid://" .. bank:pick("footstep")
+--
+-- Resolve once at startup; every pick afterwards is a local lookup with no
+-- request. Roblox caps a server at 500 HTTP requests/minute, so resolving
+-- per-play would exhaust that almost immediately.
+function AudioScape.createSoundBank(
+	self: AudioScapeInstance,
+	options: SoundBankOptions
+): AudioScapeSoundBank.SoundBankInstance
+	-- AudioScapeInstance structurally satisfies the sound bank's CatalogClient
+	-- duck-type, but the analyzer can't see the match across modules — same
+	-- cast the music player needs, and exercised by the sound bank tests.
+	return AudioScapeSoundBank.new(self :: any, options)
 end
 
 --[[ ──────────────────────────────────────────

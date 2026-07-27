@@ -423,6 +423,78 @@ Pagination works as usual: `pages:GetCurrentPage()`, `pages:AdvanceToNextPageAsy
 
 This also works from a LocalScript via `AudioScapeClient:getAssetService()` once you've called `AudioScape:enableClientAccess()` on the server.
 
+## Sound Banks
+
+A footstep that plays the identical clip every time reads as obviously synthetic — the "machine gun" effect. The usual fix is hand-picking five assets and calling `math.random`. A sound bank does it from the asset you already have.
+
+```lua
+local bank = AudioScape:createSoundBank({
+    seeds = { footstep = "rbxassetid://1837879082" },
+    kind = "sfx",
+})
+bank:resolveAsync()
+
+-- Later, on every step:
+sound.SoundId = "rbxassetid://" .. bank:pick("footstep")
+```
+
+`pick` never returns the same asset twice in a row.
+
+### `AudioScape:createSoundBank(options)`
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `seeds` | `{ [string]: string }` | — | Named asset IDs, e.g. `{ footstep = "rbxassetid://123" }` |
+| `kind` | `string?` | `"sfx"` | `"sfx"` expands through the sound-effects catalog, `"music"` through music |
+| `poolSize` | `number?` | `8` | How many assets to end up with per seed |
+| `mode` | `string?` | `"extend"` | `"extend"` keeps your asset in the pool and adds neighbours; `"replace"` uses neighbours only |
+| `playerId` | `number?` | — | |
+
+**Your asset is never silently swapped.** In the default `extend` mode it leads its own pool — we add to your choice rather than overriding it. `replace` exists for cases where you genuinely don't care which specific clip plays, and you have to ask for it.
+
+### Methods
+
+| Method | Description |
+| --- | --- |
+| `bank:resolveAsync()` | Build the pools. Returns `(ok, err)`. |
+| `bank:pick(name)` | An asset ID from that pool, never the same one twice running |
+| `bank:getPool(name)` | The whole pool as a list, e.g. to replicate to clients |
+| `bank:reportUnavailable(assetId)` | Drop an asset that failed to load; later picks avoid it |
+| `bank:flushPickCounts()` | Emit accumulated pick analytics |
+| `bank:destroy()` | Flush and clear |
+
+**Resolve once at startup.** Roblox caps a server at 500 HTTP requests per minute, so resolving per-play would exhaust the budget almost immediately. After `resolveAsync()`, every `pick` is a local table lookup with no request.
+
+### Seeding from assets we don't have
+
+If a seed isn't in AudioScape's catalog, the bank asks the engine what the asset *is* (`AssetService:GetAudioMetadataAsync`, which works for any Roblox audio ID) and searches on its title and artist to find an anchor. `bank.Pools[name].source` tells you which path was taken:
+
+| `source` | Meaning |
+| --- | --- |
+| `catalog` | The seed itself is in our catalog |
+| `bridged` | Matched through the engine's metadata for the seed |
+| `none` | Couldn't resolve — the pool is just your seed |
+
+`none` is a graceful degradation, not an error: you get back exactly the behaviour you had before adding the bank.
+
+### Healing broken assets
+
+A moderated or otherwise unavailable asset is a silent bug — it just doesn't play. Only a client can detect this: a headless server never fetches audio, so `GetAssetFetchStatus` stays `None` there forever. Watch it client-side and report back:
+
+```lua
+local ContentProvider = game:GetService("ContentProvider")
+
+ContentProvider.AssetFetchFailed:Connect(function(assetId)
+    reportFailureRemote:FireServer(assetId)  -- server calls bank:reportUnavailable
+end)
+```
+
+Once reported, that asset is excluded from future picks. If every asset in a pool becomes unavailable, `pick` falls back to your original seed rather than returning `nil`.
+
+### Analytics
+
+Picks are far too frequent to report individually — a footstep loop would overrun the 500-event buffer in seconds. The bank counts locally and `flushPickCounts()` emits one `audio_pick` event per distinct asset carrying a `count`. `resolveAsync()` emits one `audio_resolve` per seed, and `reportUnavailable` emits `audio_unavailable`.
+
 ## Auditing your audio
 
 ### `AudioScape:auditAudio(options?)`

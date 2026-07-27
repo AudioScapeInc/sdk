@@ -546,6 +546,54 @@ step("auditAudio", function()
 	)
 end)
 
+-- createSoundBank. The bridging path calls AssetService:GetAudioMetadataAsync,
+-- which Lune can't model at all, so the engine is the only place it can be
+-- exercised against the real catalog.
+step("createSoundBank", function()
+	assert(fixtures.sfx_asset_id, "needs sfx_asset_id from sfxBrowse_trending")
+
+	local bank = client:createSoundBank({
+		seeds = { impact = fixtures.sfx_asset_id },
+		kind = "sfx",
+		poolSize = 5,
+	})
+	local ok, err = bank:resolveAsync()
+	assert(ok, "resolveAsync failed: " .. tostring(err))
+
+	local pool = bank:getPool("impact")
+	assert(#pool >= 1, "pool is empty")
+	-- extend mode: the seed must lead its own pool, never be replaced.
+	assert(pool[1] == fixtures.sfx_asset_id, "seed does not lead the pool: " .. tostring(pool[1]))
+	assert(
+		bank.Pools.impact.source == "catalog",
+		"a trending SFX asset should resolve via the catalog, got " .. tostring(bank.Pools.impact.source)
+	)
+
+	-- No immediate repeats. With a single-asset pool this is trivially true,
+	-- so only assert it when there's an actual choice to make.
+	if #pool > 1 then
+		local previous = nil
+		for i = 1, 100 do
+			local pick = bank:pick("impact")
+			assert(pick, "pick returned nil at iteration " .. tostring(i))
+			assert(pick ~= previous, "immediate repeat at iteration " .. tostring(i))
+			previous = pick
+		end
+
+		-- Healing: a dropped asset must never come back.
+		local dropped = pool[2]
+		assert(bank:reportUnavailable(dropped), "reportUnavailable returned false")
+		for _ = 1, 100 do
+			assert(bank:pick("impact") ~= dropped, "unavailable asset was picked again")
+		end
+	end
+
+	-- Capture before destroy(), which clears Pools.
+	local source = bank.Pools.impact.source
+	bank:destroy()
+	return string.format("source=%s pool=%d", source, #pool)
+end)
+
 -- enableClientAccess creates ReplicatedStorage.AudioScapeRemotes (Folder)
 -- with one RemoteFunction per public method. Lune doesn't model
 -- RemoteFunction at all, so this is net new coverage.

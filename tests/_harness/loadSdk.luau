@@ -109,10 +109,12 @@ local function loadSdk(opts: LoadOpts): (any, { string }, { any })
 	-- table to both the parent's `script.X` lookup and the require call.
 	local playerScript = { Name = "AudioScapeMusicPlayer" }
 	local clientScript = { Name = "AudioScapeClient" }
+	local soundBankScript = { Name = "AudioScapeSoundBank" }
 	local rootScript: { [string]: any } = {
 		Name = "AudioScape",
 		AudioScapeMusicPlayer = playerScript,
 		AudioScapeClient = clientScript,
+		AudioScapeSoundBank = soundBankScript,
 	}
 
 	local subBase = {
@@ -134,6 +136,12 @@ local function loadSdk(opts: LoadOpts): (any, { string }, { any })
 			env.script = playerScript
 			env.require = customRequire
 			return loadFile("src/AudioScapeMusicPlayer.luau", env)
+		end
+		if target == soundBankScript then
+			local env = makeBaseEnv(subBase)
+			env.script = soundBankScript
+			env.require = customRequire
+			return loadFile("src/AudioScapeSoundBank.luau", env)
 		end
 		if target == clientScript then
 			local env = makeBaseEnv(subBase)
