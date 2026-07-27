@@ -5,8 +5,8 @@ local RunService = game:GetService("RunService")
 
 local AudioScapeMusicPlayer = require(script.AudioScapeMusicPlayer)
 
-local BASE_URL = "https://api.audioscape.ai/developer"
-local ANALYTICS_URL = "https://api.audioscape.ai/analytics"
+local DEFAULT_BASE_URL = "https://api.audioscape.ai/developer"
+local DEFAULT_ANALYTICS_URL = "https://api.audioscape.ai/analytics"
 
 local VALID_BROWSE_TYPES = {
 	artist = true,
@@ -65,7 +65,7 @@ export type SearchOptions = {
 	}?,
 }
 
--- Convenience options for client:lookup — sugar around client:search with
+-- Convenience options for AudioScape:lookup — sugar around AudioScape:search with
 -- only asset_ids set. asset_ids is the only required field; limit/offset are
 -- accepted for API-shape consistency (filters are not — explicit ID lookups
 -- bypass all filters).
@@ -216,7 +216,7 @@ export type Track = {
 	-- Stable across endpoints; use for display.
 	genre: string,
 	-- URL-safe identifier paired with `genre` (e.g. "hip-hop-rap"). Pass
-	-- back into client:browse({ type = "genre", name = ... }) or into
+	-- back into AudioScape:browse({ type = "genre", name = ... }) or into
 	-- SearchOptions.filters.genres without URL-encoding.
 	genre_slug: string,
 	duration: number,
@@ -318,12 +318,12 @@ export type BrowseListResult = {
 	},
 }
 
--- Typed shape of an item from `client:browse({ type = "genre" }).items[i]`.
+-- Typed shape of an item from `AudioScape:browse({ type = "genre" }).items[i]`.
 -- BrowseListResult.items stays permissive so other browse types
 -- (artist/album/mood) aren't forced through a discriminated union;
 -- consumers querying genre items are expected to cast manually:
 --
---   local result = client:browse({ type = "genre" })
+--   local result = AudioScape:browse({ type = "genre" })
 --   for _, item in result.items do
 --       local genre = item :: AudioScape.BrowseGenreItem
 --       print(genre.display_name, "→", genre.slug)
@@ -331,7 +331,7 @@ export type BrowseListResult = {
 export type BrowseGenreItem = {
 	-- Canonical genre name from the AudioScape taxonomy (e.g. "Hip Hop / Rap").
 	name: string,
-	-- URL-safe identifier (e.g. "hip-hop-rap"). Pass back into client:browse
+	-- URL-safe identifier (e.g. "hip-hop-rap"). Pass back into AudioScape:browse
 	-- as the `name` parameter to drill into this genre's tracks.
 	slug: string,
 	-- Display label (currently equal to `name`, may diverge in the future).
@@ -473,6 +473,8 @@ type AnalyticsEvent = {
 -- multiple-key case and for test isolation.
 local AudioScape = {
 	_apiKey = nil :: any,
+	_baseUrl = DEFAULT_BASE_URL,
+	_analyticsUrl = DEFAULT_ANALYTICS_URL,
 	_universeId = "",
 	_placeId = "",
 	_analyticsEnabled = true,
@@ -494,6 +496,8 @@ AudioScape.__index = AudioScape
 export type AudioScapeInstance = typeof(setmetatable(
 	{} :: {
 		_apiKey: any,
+		_baseUrl: string,
+		_analyticsUrl: string,
 		_universeId: string,
 		_placeId: string,
 		_analyticsEnabled: boolean,
@@ -608,7 +612,7 @@ local function request(
 	end
 
 	local ok, result = pcall(HttpService.RequestAsync, HttpService, {
-		Url = BASE_URL .. path,
+		Url = self._baseUrl .. path,
 		Method = "POST",
 		Headers = headers,
 		Body = jsonBody,
@@ -672,7 +676,7 @@ local function requestGet(
 	end
 
 	local ok, result = pcall(HttpService.RequestAsync, HttpService, {
-		Url = BASE_URL .. path .. buildQuery(query),
+		Url = self._baseUrl .. path .. buildQuery(query),
 		Method = "GET",
 		Headers = headers,
 	})
@@ -731,7 +735,7 @@ local function flushAnalyticsBuffer(self: AudioScapeInstance): boolean
 	}
 
 	local ok, result = pcall(HttpService.RequestAsync, HttpService, {
-		Url = ANALYTICS_URL .. "/v1/analytics",
+		Url = self._analyticsUrl .. "/v1/analytics",
 		Method = "POST",
 		Headers = headers,
 		Body = jsonBody,
@@ -825,6 +829,8 @@ local function initState(target: any, apiKey: any, caller: string): AudioScapeIn
 	end
 
 	target._apiKey = apiKey
+	target._baseUrl = target._baseUrl or DEFAULT_BASE_URL
+	target._analyticsUrl = target._analyticsUrl or DEFAULT_ANALYTICS_URL
 	-- Universe and Place are properties of the running game, so they're the
 	-- same for every object — nothing here is genuinely per-instance except
 	-- the key and the analytics settings.
@@ -866,6 +872,42 @@ function AudioScape.setApiKey(apiKey: any, colonCallKey: any?): AudioScapeInstan
 		apiKey = colonCallKey
 	end
 	return initState(AudioScape, apiKey, "AudioScape.setApiKey")
+end
+
+export type EndpointOptions = {
+	-- Base for the developer API. Default "https://api.audioscape.ai/developer".
+	baseUrl: string?,
+	-- Base for analytics ingest. Default "https://api.audioscape.ai/analytics".
+	analyticsUrl: string?,
+}
+
+-- Point the SDK at a different API host. You only need this to develop
+-- against a locally-running API or a staging environment:
+--
+--   AudioScape.setEndpoints({
+--       baseUrl = "http://localhost:3000/developer",
+--       analyticsUrl = "http://localhost:3001/analytics",
+--   })
+--
+-- Studio can reach http://localhost; a published Roblox server cannot, so
+-- this is a development affordance rather than a deployment mechanism. Safe
+-- to call before or after setApiKey — neither resets the other. Omitted
+-- fields keep their current value.
+function AudioScape.setEndpoints(options: any, colonCallOptions: EndpointOptions?)
+	-- Tolerate AudioScape:setEndpoints{...} as well as the dot form.
+	local opts: EndpointOptions = if options == AudioScape then colonCallOptions :: any else options
+	assert(type(opts) == "table", "setEndpoints requires a table with baseUrl and/or analyticsUrl")
+
+	if opts.baseUrl ~= nil then
+		assert(type(opts.baseUrl) == "string" and #opts.baseUrl > 0, "baseUrl must be a non-empty string")
+		-- A trailing slash would produce "…//v1/search", which some gateways
+		-- treat as a different route than the one they registered.
+		AudioScape._baseUrl = (string.gsub(opts.baseUrl, "/+$", ""))
+	end
+	if opts.analyticsUrl ~= nil then
+		assert(type(opts.analyticsUrl) == "string" and #opts.analyticsUrl > 0, "analyticsUrl must be a non-empty string")
+		AudioScape._analyticsUrl = (string.gsub(opts.analyticsUrl, "/+$", ""))
+	end
 end
 
 -- Create a separate object with its own API key. Only needed when one server
@@ -1054,8 +1096,8 @@ function AudioScape.search(self: AudioScapeInstance, options: SearchOptions): (S
 	return request(self, "/v1/search", body, options.playerId)
 end
 
--- Sugar over client:search for known-asset-ID batch lookups. Equivalent to
--- client:search({ asset_ids = options.asset_ids, playerId = options.playerId }).
+-- Sugar over AudioScape:search for known-asset-ID batch lookups. Equivalent to
+-- AudioScape:search({ asset_ids = options.asset_ids, playerId = options.playerId }).
 -- Filters intentionally aren't accepted — explicit ID lookups bypass them
 -- server-side, and exposing the field here would mislead. Up to 100 IDs.
 function AudioScape.lookup(self: AudioScapeInstance, options: LookupOptions): (SearchResult?, string?)
@@ -1571,7 +1613,7 @@ end
 
 -- Drop-in stand-in for game:GetService("AssetService").
 --
---   local AssetService = client:getAssetService()
+--   local AssetService = AudioScape:getAssetService()
 --   local params = Instance.new("AudioSearchParams")
 --   params.SearchKeyword = "chill lofi"
 --   local pages = AssetService:SearchAudioAsync(params)
@@ -1668,6 +1710,167 @@ function AudioScape.getAssetService(self: AudioScapeInstance, options: AssetServ
 			return member
 		end,
 	})
+end
+
+--[[ ──────────────────────────────────────────
+     Audio audit
+     ────────────────────────────────────────── ]]
+
+-- /v1/search caps an asset_ids lookup at 100.
+local LOOKUP_BATCH_SIZE = 100
+
+-- Where audio normally lives. Scanning `game` outright would walk services
+-- that never hold Sounds and can be enormous.
+local DEFAULT_AUDIT_ROOTS = {
+	"Workspace",
+	"ReplicatedStorage",
+	"ServerStorage",
+	"ServerScriptService",
+	"StarterGui",
+	"StarterPack",
+	"StarterPlayer",
+	"SoundService",
+	"Lighting",
+}
+
+export type AudioAuditOptions = {
+	-- Containers to walk. Defaults to the services above. Pass a narrower
+	-- list on a large place — GetDescendants on a big Workspace is not free.
+	roots: { Instance }?,
+	playerId: number?,
+}
+
+export type AudioAssetUsage = {
+	asset_id: string,
+	-- How many Sound / AudioPlayer instances reference this asset.
+	uses: number,
+	-- Full name of the first instance found, so you can jump straight to it.
+	sample_path: string,
+	-- Whether AudioScape's catalog has this asset. `false` means we can't
+	-- offer variations or similarity for it — it may still play fine.
+	known: boolean,
+}
+
+export type AudioAuditResult = {
+	assets: { AudioAssetUsage },
+	meta: {
+		instances_scanned: number,
+		distinct_assets: number,
+		known: number,
+		unknown: number,
+	},
+}
+
+-- Inventory every audio asset referenced in the place, and check which ones
+-- AudioScape's catalog knows about.
+--
+--   local audit = AudioScape:auditAudio()
+--   print(audit.meta.distinct_assets .. " distinct assets in this place")
+--
+-- Read-only and safe to call at any time, but it walks the data model, so
+-- treat it as a startup or development diagnostic rather than something to
+-- poll. `known = false` only means the asset isn't in our catalog — it says
+-- nothing about whether the asset still plays.
+function AudioScape.auditAudio(self: AudioScapeInstance, options: AudioAuditOptions?): (AudioAuditResult?, string?)
+	local opts: AudioAuditOptions = options or {}
+
+	local roots: { Instance } = opts.roots or {}
+	if #roots == 0 then
+		for _, name in DEFAULT_AUDIT_ROOTS do
+			-- Some services aren't reachable from every context (and
+			-- GetService throws on an unknown name), so skip rather than fail
+			-- the whole audit.
+			local ok, service = pcall(function()
+				return game:GetService(name :: any)
+			end)
+			if ok and service then
+				table.insert(roots, service)
+			end
+		end
+	end
+
+	local usage: { [string]: AudioAssetUsage } = {}
+	local order: { string } = {}
+	local scanned = 0
+
+	for _, root in roots do
+		local ok, descendants = pcall(function()
+			return root:GetDescendants()
+		end)
+		if not ok then
+			continue
+		end
+		for _, instance in descendants do
+			if not (instance:IsA("Sound") or instance:IsA("AudioPlayer")) then
+				continue
+			end
+			scanned += 1
+			local assetId = resolveAssetId(instance)
+			if not assetId then
+				-- An empty SoundId is normal for a template Sound that gets
+				-- its asset assigned at runtime; nothing to report.
+				continue
+			end
+			local entry = usage[assetId]
+			if entry then
+				entry.uses += 1
+			else
+				usage[assetId] = {
+					asset_id = assetId,
+					uses = 1,
+					sample_path = instance:GetFullName(),
+					known = false,
+				}
+				table.insert(order, assetId)
+			end
+		end
+	end
+
+	-- Resolve in batches. A partial failure fails the whole audit rather than
+	-- silently reporting assets as unknown when we simply couldn't ask.
+	local knownCount = 0
+	for start = 1, #order, LOOKUP_BATCH_SIZE do
+		local batch: { string } = {}
+		for i = start, math.min(start + LOOKUP_BATCH_SIZE - 1, #order) do
+			table.insert(batch, order[i])
+		end
+
+		local result, err = AudioScape.lookup(self, { asset_ids = batch, playerId = opts.playerId })
+		if not result then
+			return nil, err
+		end
+		local tracks: { Track } = result.tracks or {}
+		for _, track in tracks do
+			local entry = usage[tostring(track.asset_id)]
+			if entry and not entry.known then
+				entry.known = true
+				knownCount += 1
+			end
+		end
+	end
+
+	local assets: { AudioAssetUsage } = {}
+	for _, assetId in order do
+		table.insert(assets, usage[assetId])
+	end
+	-- Most-used first: that's the order you'd want to act on them in.
+	table.sort(assets, function(a, b)
+		if a.uses == b.uses then
+			return a.asset_id < b.asset_id
+		end
+		return a.uses > b.uses
+	end)
+
+	return {
+		assets = assets,
+		meta = {
+			instances_scanned = scanned,
+			distinct_assets = #order,
+			known = knownCount,
+			unknown = #order - knownCount,
+		},
+	},
+		nil
 end
 
 --[[ ──────────────────────────────────────────

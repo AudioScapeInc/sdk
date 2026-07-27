@@ -94,6 +94,26 @@ local secondary = AudioScape.new("another-api-key")
 local result = secondary:search({ query = "chill lo-fi" })
 ```
 
+### `AudioScape.setEndpoints(options)` *(advanced)*
+
+Points the SDK at a different API host. You only need this to develop against a locally-running API or a staging environment.
+
+```lua
+AudioScape.setEndpoints({
+    baseUrl = "http://localhost:3000/developer",
+    analyticsUrl = "http://localhost:3001/analytics",
+})
+```
+
+| Option | Type | Default |
+| --- | --- | --- |
+| `baseUrl` | `string?` | `https://api.audioscape.ai/developer` |
+| `analyticsUrl` | `string?` | `https://api.audioscape.ai/analytics` |
+
+Omitted fields keep their current value, and it's safe to call before or after `setApiKey`. Trailing slashes are trimmed.
+
+> **Note:** Roblox Studio can reach `http://localhost`, but a published Roblox server cannot. This is a development affordance, not a deployment mechanism.
+
 ### `AudioScape:search(options)`
 
 Search the catalog using natural language, or look up specific tracks by asset ID.
@@ -402,6 +422,42 @@ Returns a stand-in for `AssetService`. `SearchAudioAsync` (and its deprecated `S
 Pagination works as usual: `pages:GetCurrentPage()`, `pages:AdvanceToNextPageAsync()`, and `pages.IsFinished`. Like native, `SearchAudioAsync` raises on failure rather than returning an error — wrap it in `pcall`.
 
 This also works from a LocalScript via `AudioScapeClient:getAssetService()` once you've called `AudioScape:enableClientAccess()` on the server.
+
+## Auditing your audio
+
+### `AudioScape:auditAudio(options?)`
+
+Walks your place for every `Sound` and `AudioPlayer`, collects the distinct asset IDs, and tells you which ones AudioScape's catalog knows about.
+
+```lua
+local audit, err = AudioScape:auditAudio()
+if audit then
+    print(audit.meta.distinct_assets .. " distinct audio assets in this place")
+    for _, asset in audit.assets do
+        print(string.format("%s — %d uses — %s", asset.asset_id, asset.uses, asset.sample_path))
+    end
+end
+```
+
+| Option | Type | Default |
+| --- | --- | --- |
+| `roots` | `{ Instance }?` | Workspace, ReplicatedStorage, ServerStorage, ServerScriptService, StarterGui, StarterPack, StarterPlayer, SoundService, Lighting |
+| `playerId` | `number?` | — |
+
+Results are ordered most-used first. Each entry gives:
+
+| Field | Description |
+| --- | --- |
+| `asset_id` | The asset ID as a string |
+| `uses` | How many instances reference it |
+| `sample_path` | `GetFullName()` of the first instance found, so you can jump to it |
+| `known` | Whether AudioScape's catalog has this asset |
+
+`meta` carries `instances_scanned`, `distinct_assets`, `known`, and `unknown`.
+
+`known = false` means we can't offer similarity or variations for that asset — it says nothing about whether the asset still plays. Sounds with an empty `SoundId` are counted in `instances_scanned` but skipped otherwise, since an unassigned template is normal.
+
+This walks the data model, so treat it as a startup or development diagnostic rather than something to poll. On a large place, pass a narrower `roots` list.
 
 ## Music Player
 

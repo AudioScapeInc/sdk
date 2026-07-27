@@ -124,7 +124,70 @@ do
 	assert(keyUsed(http, 1) == "second-key", "flush uses the new key")
 end
 
--- 7. The AssetService shim works off the module too
+-- 7. setEndpoints redirects requests, and survives setApiKey in either order
+do
+	local http = mockHttp.new()
+	local AudioScape: any = loadSdk({ http = http })
+
+	AudioScape.setEndpoints({ baseUrl = "http://localhost:3000/developer" })
+	AudioScape.setApiKey("local-key")
+
+	http:queueResponse(emptyResponse())
+	AudioScape:search({ query = "test" })
+	assert(
+		http.requests[1].url:find("http://localhost:3000/developer/v1/search", 1, true),
+		"request went to the overridden host; got: " .. tostring(http.requests[1].url)
+	)
+
+	-- ...and the reverse order, since setApiKey re-runs initState.
+	local http2 = mockHttp.new()
+	local AudioScape2: any = loadSdk({ http = http2 })
+	AudioScape2.setApiKey("local-key")
+	AudioScape2.setEndpoints({ baseUrl = "http://localhost:3000/developer" })
+
+	http2:queueResponse(emptyResponse())
+	AudioScape2:search({ query = "test" })
+	assert(
+		http2.requests[1].url:find("http://localhost:3000/developer/v1/search", 1, true),
+		"setApiKey before setEndpoints also works; got: " .. tostring(http2.requests[1].url)
+	)
+end
+
+-- 8. A trailing slash would produce a double slash in the path, which some
+--    gateways route differently from the path they registered.
+do
+	local http = mockHttp.new()
+	local AudioScape: any = loadSdk({ http = http })
+
+	AudioScape.setEndpoints({ baseUrl = "http://localhost:3000/developer///" })
+	AudioScape.setApiKey("k")
+
+	http:queueResponse(emptyResponse())
+	AudioScape:search({ query = "test" })
+	assert(
+		not http.requests[1].url:find("developer//", 1, true),
+		"trailing slashes trimmed; got: " .. tostring(http.requests[1].url)
+	)
+end
+
+-- 9. Analytics ingest honours its own override independently of baseUrl
+do
+	local http = mockHttp.new()
+	local AudioScape: any = loadSdk({ http = http })
+
+	AudioScape.setEndpoints({ analyticsUrl = "http://localhost:3001/analytics" })
+	AudioScape.setApiKey("k")
+	AudioScape:trackPlay("123", 1, 10)
+
+	http:queueResponse({ Success = true, StatusCode = 200, Body = "{}" })
+	AudioScape:flushAnalytics()
+	assert(
+		http.requests[1].url == "http://localhost:3001/analytics/v1/analytics",
+		"analytics posted to the override; got: " .. tostring(http.requests[1].url)
+	)
+end
+
+-- 10. The AssetService shim works off the module too
 do
 	local http = mockHttp.new()
 	local AudioScape: any = loadSdk({ http = http })

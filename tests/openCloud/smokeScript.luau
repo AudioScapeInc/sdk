@@ -492,6 +492,60 @@ step("getAssetService", function()
 	return string.format("music=%d sfx=%d finished=%s", #page, #sfxPage, tostring(pages.IsFinished))
 end)
 
+-- auditAudio walks the data model for Sound / AudioPlayer instances. Lune's
+-- mock has no tree, no IsA and no GetFullName, so this is the only place the
+-- scan can be exercised. Plant known instances first so the counts are
+-- deterministic rather than dependent on whatever the test place contains.
+step("auditAudio", function()
+	assert(fixtures.music_asset_id, "needs music_asset_id from browse_trending")
+
+	local folder = Instance.new("Folder")
+	folder.Name = "AudioScapeAuditFixture"
+	folder.Parent = workspace
+
+	-- Same asset twice, to prove uses are counted rather than double-listed.
+	for _ = 1, 2 do
+		local sound = Instance.new("Sound")
+		sound.SoundId = "rbxassetid://" .. fixtures.music_asset_id
+		sound.Parent = folder
+	end
+
+	local player = Instance.new("AudioPlayer")
+	player.Asset = "rbxassetid://" .. fixtures.music_asset_id
+	player.Parent = folder
+
+	-- An unassigned Sound is normal for a template that gets its asset at
+	-- runtime; it must be skipped rather than reported as a broken entry.
+	local blank = Instance.new("Sound")
+	blank.Parent = folder
+
+	local audit, err = client:auditAudio({ roots = { folder } })
+	folder:Destroy()
+
+	assert(audit, "auditAudio failed: " .. tostring(err))
+	assert(audit.meta.instances_scanned == 4, "scanned " .. tostring(audit.meta.instances_scanned) .. ", expected 4")
+	assert(
+		audit.meta.distinct_assets == 1,
+		"distinct_assets = " .. tostring(audit.meta.distinct_assets) .. ", expected 1 (blank Sound skipped)"
+	)
+
+	local entry = audit.assets[1]
+	assert(entry, "no asset entries returned")
+	assert(entry.asset_id == fixtures.music_asset_id, "wrong asset_id: " .. tostring(entry.asset_id))
+	assert(entry.uses == 3, "uses = " .. tostring(entry.uses) .. ", expected 3 (2 Sounds + 1 AudioPlayer)")
+	assert(#entry.sample_path > 0, "sample_path is empty")
+	-- The fixture came from our own trending list, so the catalog must know it.
+	assert(entry.known, "trending asset reported as unknown to the catalog")
+	assert(audit.meta.known == 1 and audit.meta.unknown == 0, "known/unknown counts wrong")
+
+	return string.format(
+		"scanned=%d distinct=%d uses=%d",
+		audit.meta.instances_scanned,
+		audit.meta.distinct_assets,
+		entry.uses
+	)
+end)
+
 -- enableClientAccess creates ReplicatedStorage.AudioScapeRemotes (Folder)
 -- with one RemoteFunction per public method. Lune doesn't model
 -- RemoteFunction at all, so this is net new coverage.
