@@ -2,6 +2,23 @@
 
 ## v0.17.0
 
+### Changed
+
+- **`AudioScape.setApiKey(key)` is now the documented entry point — call methods on the module directly.** Previously the docs created an object and called it `client`, which collides with what "client" means in Roblox: the player's machine. The collision was on both axes at once — the same variable name was used for the server-side object and the LocalScript-side object in adjacent examples, and the server object's internal type was named `AudioScapeClient` while `AudioScapeClient.luau` is the LocalScript module. Now there's no object to name:
+
+  ```lua
+  local AudioScape = require(ServerScriptService.Packages.AudioScape)
+  AudioScape.setApiKey(HttpService:GetSecret("AudioScapeKey"))
+
+  local result = AudioScape:search({ query = "chill lo-fi" })
+  local player = AudioScape:createPlayer()
+  ```
+
+  `setApiKey` takes a plain string or `Secret` userdata, exactly like `new` did, and tolerates both `AudioScape.setApiKey(key)` and `AudioScape:setApiKey(key)`. Calling it again swaps the key without dropping queued analytics or starting a second flush loop.
+- **`AudioScapeClient` works the same way** — call methods on the module from a LocalScript; the RemoteFunctions resolve on first use.
+- **Nothing is removed.** `AudioScape.new(key)` and `AudioScapeClient.new()` still work and are still the right call when one server needs more than one API key, or when you want the client's remotes resolved eagerly so a missing `enableClientAccess()` fails at startup rather than at first search. Existing integrations are unaffected.
+- The README's "Client Access" section is now "Calling from LocalScripts", and "client" throughout the docs now only ever means the Roblox client.
+
 ### Added
 
 - **`client:getAssetService()` — a drop-in stand-in for `game:GetService("AssetService")`.** Existing `AssetService:SearchAudioAsync(params)` call sites work unchanged: same `AudioSearchParams` in, same `AudioPages` out (`GetCurrentPage`, `AdvanceToNextPageAsync`, `IsFinished`), same raise-on-failure behaviour. Search runs against AudioScape's catalog, so results are matched on meaning rather than keywords. `AudioSubType` routes the call — `Music` searches music, `SoundEffect` searches SFX. The deprecated `SearchAudio` alias is supported too.

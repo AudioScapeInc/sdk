@@ -465,10 +465,33 @@ type AnalyticsEvent = {
 	metadata: { [string]: any }?,
 }
 
-local AudioScape = {}
+-- The module doubles as a ready-to-use object. `AudioScape.setApiKey(key)`
+-- fills in the state below, and every method then works on `AudioScape`
+-- directly — so there's nothing to name, and no chance of calling it
+-- something that collides with Roblox's own client/server vocabulary.
+-- `AudioScape.new(key)` still returns a separate object for the rare
+-- multiple-key case and for test isolation.
+local AudioScape = {
+	_apiKey = nil :: any,
+	_universeId = "",
+	_placeId = "",
+	_analyticsEnabled = true,
+	_analyticsBatchInterval = DEFAULT_BATCH_INTERVAL,
+	_analyticsMaxBatchSize = DEFAULT_MAX_BATCH_SIZE,
+	_analyticsMaxQueueSize = DEFAULT_MAX_QUEUE_SIZE,
+	_analyticsBuffer = {} :: { AnalyticsEvent },
+	_analyticsRunning = false,
+	_analyticsBackoff = DEFAULT_BATCH_INTERVAL,
+	_analyticsConsecutiveFailures = 0,
+	_structureCache = {} :: { [string]: StructureResult },
+}
 AudioScape.__index = AudioScape
 
-type AudioScapeClient = typeof(setmetatable(
+-- Named "Instance" rather than "Client" on purpose: in Roblox, "client" means
+-- the player's machine, and this object only ever lives on the server. The
+-- name `AudioScapeClient` belongs to the LocalScript companion module, where
+-- it means what a Roblox developer expects it to mean.
+export type AudioScapeInstance = typeof(setmetatable(
 	{} :: {
 		_apiKey: any,
 		_universeId: string,
@@ -566,7 +589,12 @@ local function resolveAssetId(input: any): string?
 	return nil
 end
 
-local function request(self: AudioScapeClient, path: string, body: { [string]: any }, playerId: number?): (any, string?)
+local function request(
+	self: AudioScapeInstance,
+	path: string,
+	body: { [string]: any },
+	playerId: number?
+): (any, string?)
 	local jsonBody = HttpService:JSONEncode(body)
 
 	local headers: { [string]: any } = {
@@ -629,7 +657,7 @@ end
 -- (browse, sfxBrowse, sfxTaxonomy, similar, sfxSimilar). Flagged as a v1.0.0
 -- cleanup candidate to fold both into one method-aware helper.
 local function requestGet(
-	self: AudioScapeClient,
+	self: AudioScapeInstance,
 	path: string,
 	query: { [string]: any },
 	playerId: number?
@@ -669,7 +697,7 @@ end
      Analytics — internal helpers
      ────────────────────────────────────────── ]]
 
-local function requeueBatch(self: AudioScapeClient, batch: { AnalyticsEvent })
+local function requeueBatch(self: AudioScapeInstance, batch: { AnalyticsEvent })
 	for i = #batch, 1, -1 do
 		table.insert(self._analyticsBuffer, 1, batch[i])
 	end
@@ -679,7 +707,7 @@ local function requeueBatch(self: AudioScapeClient, batch: { AnalyticsEvent })
 	end
 end
 
-local function flushAnalyticsBuffer(self: AudioScapeClient): boolean
+local function flushAnalyticsBuffer(self: AudioScapeInstance): boolean
 	if #self._analyticsBuffer == 0 then
 		return true
 	end
@@ -727,7 +755,7 @@ local function flushAnalyticsBuffer(self: AudioScapeClient): boolean
 	return true
 end
 
-local function startAnalyticsLoop(self: AudioScapeClient)
+local function startAnalyticsLoop(self: AudioScapeInstance)
 	if self._analyticsRunning then
 		return
 	end
@@ -766,7 +794,7 @@ local function startAnalyticsLoop(self: AudioScapeClient)
 	end)
 end
 
-local function enqueueEvent(self: AudioScapeClient, event: AnalyticsEvent)
+local function enqueueEvent(self: AudioScapeInstance, event: AnalyticsEvent)
 	if not self._analyticsEnabled then
 		return
 	end
@@ -788,38 +816,67 @@ end
      Public API
      ────────────────────────────────────────── ]]
 
-function AudioScape.new(apiKey: any): AudioScapeClient
-	assert(apiKey ~= nil, "AudioScape.new requires an API key (string or Secret)")
+-- Shared by setApiKey and new so the two paths can't drift. `target` is
+-- either the module table (singleton use) or a fresh table (new).
+local function initState(target: any, apiKey: any, caller: string): AudioScapeInstance
+	assert(apiKey ~= nil, caller .. " requires an API key (string or Secret)")
 	if type(apiKey) == "string" then
-		assert(#apiKey > 0, "AudioScape.new requires a non-empty API key string")
+		assert(#apiKey > 0, caller .. " requires a non-empty API key string")
 	end
 
-	local self = setmetatable({
-		_apiKey = apiKey,
-		_universeId = tostring(game.GameId),
-		_placeId = tostring(game.PlaceId),
-		-- Analytics state
-		_analyticsEnabled = true,
-		_analyticsBatchInterval = DEFAULT_BATCH_INTERVAL,
-		_analyticsMaxBatchSize = DEFAULT_MAX_BATCH_SIZE,
-		_analyticsMaxQueueSize = DEFAULT_MAX_QUEUE_SIZE,
-		_analyticsBuffer = {},
-		_analyticsRunning = false,
-		_analyticsBackoff = DEFAULT_BATCH_INTERVAL,
-		_analyticsConsecutiveFailures = 0,
-		_structureCache = {},
-	}, AudioScape)
+	target._apiKey = apiKey
+	-- Universe and Place are properties of the running game, so they're the
+	-- same for every object — nothing here is genuinely per-instance except
+	-- the key and the analytics settings.
+	target._universeId = tostring(game.GameId)
+	target._placeId = tostring(game.PlaceId)
+
+	-- Analytics state. Buffer and running-flag are preserved if they already
+	-- exist, so calling setApiKey a second time swaps the key without
+	-- dropping queued events or spawning a second flush loop.
+	target._analyticsEnabled = true
+	target._analyticsBatchInterval = DEFAULT_BATCH_INTERVAL
+	target._analyticsMaxBatchSize = DEFAULT_MAX_BATCH_SIZE
+	target._analyticsMaxQueueSize = DEFAULT_MAX_QUEUE_SIZE
+	target._analyticsBuffer = target._analyticsBuffer or {}
+	target._analyticsRunning = target._analyticsRunning or false
+	target._analyticsBackoff = DEFAULT_BATCH_INTERVAL
+	target._analyticsConsecutiveFailures = 0
+	target._structureCache = target._structureCache or {}
 
 	-- Start analytics loop on server only
 	if RunService:IsServer() and RunService:IsRunning() then
-		startAnalyticsLoop(self)
+		startAnalyticsLoop(target)
 	end
 
-	return self
+	return target
+end
+
+-- Point the module at your API key. After this, call methods on AudioScape
+-- itself — `AudioScape:search{...}`, `AudioScape:createPlayer()`.
+--
+--   local AudioScape = require(ServerScriptService.Packages.AudioScape)
+--   AudioScape.setApiKey(HttpService:GetSecret("AudioScapeKey"))
+--
+-- Accepts a plain string or the Secret userdata from HttpService:GetSecret.
+function AudioScape.setApiKey(apiKey: any, colonCallKey: any?): AudioScapeInstance
+	-- Tolerate AudioScape:setApiKey(key) as well as AudioScape.setApiKey(key);
+	-- the colon form arrives with the module table as the first argument.
+	if apiKey == AudioScape then
+		apiKey = colonCallKey
+	end
+	return initState(AudioScape, apiKey, "AudioScape.setApiKey")
+end
+
+-- Create a separate object with its own API key. Only needed when one server
+-- must talk to AudioScape under more than one key — otherwise prefer
+-- setApiKey and call methods on the module directly.
+function AudioScape.new(apiKey: any): AudioScapeInstance
+	return initState(setmetatable({}, AudioScape), apiKey, "AudioScape.new")
 end
 
 -- Configure analytics settings (call before tracking events)
-function AudioScape.configureAnalytics(self: AudioScapeClient, config: AnalyticsConfig)
+function AudioScape.configureAnalytics(self: AudioScapeInstance, config: AnalyticsConfig)
 	if config.enabled ~= nil then
 		self._analyticsEnabled = config.enabled
 	end
@@ -840,7 +897,7 @@ function AudioScape.configureAnalytics(self: AudioScapeClient, config: Analytics
 end
 
 -- Force flush all buffered analytics events immediately (stops after repeated failures)
-function AudioScape.flushAnalytics(self: AudioScapeClient)
+function AudioScape.flushAnalytics(self: AudioScapeInstance)
 	local failures = 0
 	while #self._analyticsBuffer > 0 and failures < 3 do
 		local ok, result = pcall(flushAnalyticsBuffer, self)
@@ -855,7 +912,12 @@ end
      ────────────────────────────────────────── ]]
 
 -- Track a song play event
-function AudioScape.trackPlay(self: AudioScapeClient, assetId: string, playerId: (number | string)?, duration: number?)
+function AudioScape.trackPlay(
+	self: AudioScapeInstance,
+	assetId: string,
+	playerId: (number | string)?,
+	duration: number?
+)
 	enqueueEvent(self, {
 		type = "play",
 		asset_id = assetId,
@@ -865,7 +927,12 @@ function AudioScape.trackPlay(self: AudioScapeClient, assetId: string, playerId:
 end
 
 -- Track a song stop event (natural end or user action)
-function AudioScape.trackStop(self: AudioScapeClient, assetId: string, playerId: (number | string)?, duration: number?)
+function AudioScape.trackStop(
+	self: AudioScapeInstance,
+	assetId: string,
+	playerId: (number | string)?,
+	duration: number?
+)
 	enqueueEvent(self, {
 		type = "stop",
 		asset_id = assetId,
@@ -875,7 +942,12 @@ function AudioScape.trackStop(self: AudioScapeClient, assetId: string, playerId:
 end
 
 -- Track a song skip event
-function AudioScape.trackSkip(self: AudioScapeClient, assetId: string, playerId: (number | string)?, duration: number?)
+function AudioScape.trackSkip(
+	self: AudioScapeInstance,
+	assetId: string,
+	playerId: (number | string)?,
+	duration: number?
+)
 	enqueueEvent(self, {
 		type = "skip",
 		asset_id = assetId,
@@ -885,7 +957,7 @@ function AudioScape.trackSkip(self: AudioScapeClient, assetId: string, playerId:
 end
 
 -- Track a vote event (value must be "up" or "down")
-function AudioScape.trackVote(self: AudioScapeClient, assetId: string, value: string, playerId: (number | string)?)
+function AudioScape.trackVote(self: AudioScapeInstance, assetId: string, value: string, playerId: (number | string)?)
 	assert(value == "up" or value == "down", "vote value must be 'up' or 'down'")
 	enqueueEvent(self, {
 		type = "vote",
@@ -896,7 +968,7 @@ function AudioScape.trackVote(self: AudioScapeClient, assetId: string, value: st
 end
 
 -- Track a favorite event
-function AudioScape.trackFavorite(self: AudioScapeClient, assetId: string, playerId: (number | string)?)
+function AudioScape.trackFavorite(self: AudioScapeInstance, assetId: string, playerId: (number | string)?)
 	enqueueEvent(self, {
 		type = "favorite",
 		asset_id = assetId,
@@ -905,7 +977,7 @@ function AudioScape.trackFavorite(self: AudioScapeClient, assetId: string, playe
 end
 
 -- Track an unfavorite event
-function AudioScape.trackUnfavorite(self: AudioScapeClient, assetId: string, playerId: (number | string)?)
+function AudioScape.trackUnfavorite(self: AudioScapeInstance, assetId: string, playerId: (number | string)?)
 	enqueueEvent(self, {
 		type = "unfavorite",
 		asset_id = assetId,
@@ -914,7 +986,7 @@ function AudioScape.trackUnfavorite(self: AudioScapeClient, assetId: string, pla
 end
 
 -- Track an add-to-queue event (setlist, playlist, etc.)
-function AudioScape.trackAddToQueue(self: AudioScapeClient, assetId: string, playerId: (number | string)?)
+function AudioScape.trackAddToQueue(self: AudioScapeInstance, assetId: string, playerId: (number | string)?)
 	enqueueEvent(self, {
 		type = "add_to_queue",
 		asset_id = assetId,
@@ -924,7 +996,7 @@ end
 
 -- Track a search result click
 function AudioScape.trackSearchClick(
-	self: AudioScapeClient,
+	self: AudioScapeInstance,
 	assetId: string,
 	playerId: (number | string)?,
 	metadata: { [string]: any }?
@@ -939,7 +1011,7 @@ end
 
 -- Track a custom event (any string type, flexible schema)
 function AudioScape.trackCustom(
-	self: AudioScapeClient,
+	self: AudioScapeInstance,
 	eventType: string,
 	assetId: string?,
 	playerId: (number | string)?,
@@ -958,7 +1030,7 @@ end
      Search / Similar / Browse
      ────────────────────────────────────────── ]]
 
-function AudioScape.search(self: AudioScapeClient, options: SearchOptions): (SearchResult?, string?)
+function AudioScape.search(self: AudioScapeInstance, options: SearchOptions): (SearchResult?, string?)
 	local hasQuery = type(options.query) == "string" and #options.query > 0
 	local hasIds = type(options.asset_ids) == "table" and #options.asset_ids > 0
 	if not hasQuery and not hasIds then
@@ -986,7 +1058,7 @@ end
 -- client:search({ asset_ids = options.asset_ids, playerId = options.playerId }).
 -- Filters intentionally aren't accepted — explicit ID lookups bypass them
 -- server-side, and exposing the field here would mislead. Up to 100 IDs.
-function AudioScape.lookup(self: AudioScapeClient, options: LookupOptions): (SearchResult?, string?)
+function AudioScape.lookup(self: AudioScapeInstance, options: LookupOptions): (SearchResult?, string?)
 	if type(options) ~= "table" or type(options.asset_ids) ~= "table" or #options.asset_ids == 0 then
 		return nil, "lookup requires a non-empty asset_ids array of numeric strings"
 	end
@@ -1001,7 +1073,7 @@ end
 -- pass the legacy options table (`{ asset_id, limit, ... }`) those fields are
 -- read from the input itself when `extras` is omitted.
 function AudioScape.similar(
-	self: AudioScapeClient,
+	self: AudioScapeInstance,
 	input: AssetIdResolvable,
 	extras: SimilarExtras?
 ): (SimilarResult?, string?)
@@ -1028,7 +1100,7 @@ end
 -- `filters.categories` (with optional `filters.subcategories`) to browse a
 -- category — the API auto-injects a curated query so you get good results
 -- without needing to know the right search terms.
-function AudioScape.sfxSearch(self: AudioScapeClient, options: SfxSearchOptions): (SfxSearchResult?, string?)
+function AudioScape.sfxSearch(self: AudioScapeInstance, options: SfxSearchOptions): (SfxSearchResult?, string?)
 	local hasQuery = type(options.query) == "string" and #options.query > 0
 	local hasCategory = options.filters and type(options.filters.categories) == "table" and #options.filters.categories > 0
 	if not hasQuery and not hasCategory then
@@ -1049,14 +1121,14 @@ end
 -- Fetch the SFX taxonomy hierarchy (broader_category → category → subcategory)
 -- so you can build pill UIs that mirror filters.categories / .subcategories on
 -- /v1/sfx/search. The API caches the response for 10 minutes.
-function AudioScape.getSfxTaxonomy(self: AudioScapeClient): (SfxTaxonomyResult?, string?)
+function AudioScape.getSfxTaxonomy(self: AudioScapeInstance): (SfxTaxonomyResult?, string?)
 	return requestGet(self, "/v1/sfx/taxonomy", {}, nil)
 end
 
 -- Find sound effects acoustically similar to a given asset. Polymorphic
 -- input — see similar() for the (input, extras?) contract.
 function AudioScape.sfxSimilar(
-	self: AudioScapeClient,
+	self: AudioScapeInstance,
 	input: AssetIdResolvable,
 	extras: SfxSimilarExtras?
 ): (SfxSimilarResult?, string?)
@@ -1080,7 +1152,7 @@ function AudioScape.sfxSimilar(
 end
 
 function AudioScape.browse(
-	self: AudioScapeClient,
+	self: AudioScapeInstance,
 	options: BrowseOptions
 ): (BrowseListResult | BrowseTracksResult | nil, string?)
 	if type(options.type) ~= "string" or not VALID_BROWSE_TYPES[options.type] then
@@ -1101,7 +1173,7 @@ end
 -- Browse sound effects. v1 only supports type='trending' — a global,
 -- popularity-ranked list of SFX assets. Mirrors browse() but returns
 -- SfxTrack-shaped entries with no list mode.
-function AudioScape.sfxBrowse(self: AudioScapeClient, options: SfxBrowseOptions): (SfxBrowseResult?, string?)
+function AudioScape.sfxBrowse(self: AudioScapeInstance, options: SfxBrowseOptions): (SfxBrowseResult?, string?)
 	if type(options.type) ~= "string" or not VALID_SFX_BROWSE_TYPES[options.type] then
 		return nil, "sfxBrowse requires type to be one of: trending"
 	end
@@ -1116,7 +1188,7 @@ function AudioScape.sfxBrowse(self: AudioScapeClient, options: SfxBrowseOptions)
 	}, options.playerId)
 end
 
-function AudioScape.getPlaylist(self: AudioScapeClient, options: PlaylistOptions): (PlaylistResult?, string?)
+function AudioScape.getPlaylist(self: AudioScapeInstance, options: PlaylistOptions): (PlaylistResult?, string?)
 	if type(options.playlist_id) ~= "string" or #options.playlist_id == 0 then
 		return nil, "getPlaylist requires a non-empty playlist_id string"
 	end
@@ -1128,7 +1200,7 @@ function AudioScape.getPlaylist(self: AudioScapeClient, options: PlaylistOptions
 	return request(self, "/v1/playlist", body, options.playerId)
 end
 
-function AudioScape.listPlaylists(self: AudioScapeClient, playerId: number?): (ListPlaylistsResult?, string?)
+function AudioScape.listPlaylists(self: AudioScapeInstance, playerId: number?): (ListPlaylistsResult?, string?)
 	local body: { [string]: any } = {
 		action = "list",
 	}
@@ -1144,7 +1216,7 @@ end
 -- is cached per resolved asset_id, so passing the same Sound/Track/string
 -- twice hits memory the second time.
 function AudioScape.getStructure(
-	self: AudioScapeClient,
+	self: AudioScapeInstance,
 	input: AssetIdResolvable,
 	extras: StructureExtras?
 ): (StructureResult?, string?)
@@ -1171,7 +1243,7 @@ end
 
 -- Locate the beat closest in time to `t` seconds. Uses binary search over the
 -- sorted beat_times array. Returns nil if the asset has no beat_grid.
-function AudioScape.beatAtTime(self: AudioScapeClient, asset_id: string, t: number): (BeatHit?, string?)
+function AudioScape.beatAtTime(self: AudioScapeInstance, asset_id: string, t: number): (BeatHit?, string?)
 	local structure, err = self:getStructure({ asset_id = asset_id })
 	if not structure then
 		return nil, err
@@ -1229,7 +1301,7 @@ end
 -- Find the section (or phrase) containing time `t`. `level` defaults to "section"
 -- (the finer layer); pass "phrase" for the coarser groupings.
 function AudioScape.sectionAtTime(
-	self: AudioScapeClient,
+	self: AudioScapeInstance,
 	asset_id: string,
 	t: number,
 	level: string?
@@ -1507,7 +1579,7 @@ end
 -- SearchAudioAsync runs against AudioScape's semantic catalog; AudioSubType
 -- routes to the music or SFX index. Every other member forwards to the real
 -- AssetService, so swapping the service in leaves unrelated calls untouched.
-function AudioScape.getAssetService(self: AudioScapeClient, options: AssetServiceOptions?)
+function AudioScape.getAssetService(self: AudioScapeInstance, options: AssetServiceOptions?)
 	local opts: AssetServiceOptions = options or {}
 	local useFallback = opts.fallback ~= false
 	local pageSize = opts.limit or NATIVE_AUDIO_PAGE_SIZE
@@ -1609,7 +1681,7 @@ export type PlayerOptions = AudioScapeMusicPlayer.PlayerOptions
 -- duck-type (trackPlay/trackStop/trackSkip), but the analyzer can't see the
 -- structural match across modules — cast to any here, exercised by the player tests.
 function AudioScape.createPlayer(
-	self: AudioScapeClient,
+	self: AudioScapeInstance,
 	options: PlayerOptions?
 ): AudioScapeMusicPlayer.MusicPlayerInstance
 	return AudioScapeMusicPlayer.new(self :: any, options)
@@ -1634,7 +1706,7 @@ end
 
 -- Enable client-side access via RemoteFunctions.
 -- Creates AudioScapeRemotes in ReplicatedStorage. Use with AudioScapeClient module in LocalScripts.
-function AudioScape.enableClientAccess(self: AudioScapeClient)
+function AudioScape.enableClientAccess(self: AudioScapeInstance)
 	local ReplicatedStorage = game:GetService("ReplicatedStorage")
 	local Players = game:GetService("Players")
 

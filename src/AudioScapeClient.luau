@@ -2,19 +2,36 @@
 --[[
 	AudioScapeClient — client-side companion for AudioScape SDK.
 
-	Place this module in ReplicatedStorage. Call client:enableClientAccess()
+	Place this module in ReplicatedStorage. Call AudioScape:enableClientAccess()
 	on the server first to set up the RemoteFunctions.
 
 	Usage (LocalScript):
 		local AudioScapeClient = require(ReplicatedStorage.AudioScapeClient)
-		local client = AudioScapeClient.new()
-		local result, err = client:search({ query = "chill beats" })
+		local result, err = AudioScapeClient:search({ query = "chill beats" })
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local AudioScapeClient = {}
+-- Like the server module, this doubles as a ready-to-use object: call
+-- methods on AudioScapeClient directly and the remotes resolve on first use.
+-- `.new()` stays supported and resolves eagerly, which is useful when you'd
+-- rather fail at startup than at first search.
+local AudioScapeClient = {
+	_remotes = nil :: Folder?,
+}
 AudioScapeClient.__index = AudioScapeClient
+
+local REMOTES_MISSING = "AudioScapeRemotes not found — call AudioScape:enableClientAccess() on the server first"
+
+local function getRemotes(self: any): Folder
+	if self._remotes then
+		return self._remotes
+	end
+	local remotes = ReplicatedStorage:WaitForChild("AudioScapeRemotes", 10)
+	assert(remotes, REMOTES_MISSING)
+	self._remotes = remotes
+	return remotes :: Folder
+end
 
 -- Mirrors the AssetIdResolvable union in src/init.luau. Open indexer on the
 -- table arm so callers passing existing options-table shapes (extra fields
@@ -23,19 +40,19 @@ export type AssetIdResolvable = string | { asset_id: string, [string]: any } | S
 
 type AudioScapeClientInstance = typeof(setmetatable(
 	{} :: {
-		_remotes: Folder,
+		-- Optional because the module itself starts unresolved and fills this
+		-- in on first use; .new() populates it up front.
+		_remotes: Folder?,
 	},
 	AudioScapeClient
 ))
 
+-- Create a separate object. Only needed if you want the remotes resolved
+-- eagerly (failing at startup rather than at first call) — otherwise call
+-- methods on AudioScapeClient directly.
 function AudioScapeClient.new(): AudioScapeClientInstance
-	local remotes = ReplicatedStorage:WaitForChild("AudioScapeRemotes", 10)
-	assert(remotes, "AudioScapeRemotes not found — call client:enableClientAccess() on the server first")
-
-	local self = setmetatable({
-		_remotes = remotes :: Folder,
-	}, AudioScapeClient)
-
+	local self = setmetatable({ _remotes = nil :: Folder? }, AudioScapeClient)
+	getRemotes(self)
 	return self
 end
 
@@ -108,7 +125,7 @@ function AudioScapeClient.search(
 		sort: string?,
 	}
 )
-	return invoke(self._remotes, "Search", options)
+	return invoke(getRemotes(self), "Search", options)
 end
 
 -- Sugar over client:search for known-asset-ID batch lookups.
@@ -117,7 +134,7 @@ function AudioScapeClient.lookup(self: AudioScapeClientInstance, options: { asse
 	if type(options) ~= "table" or type(options.asset_ids) ~= "table" or #options.asset_ids == 0 then
 		return nil, "lookup requires a non-empty asset_ids array of numeric strings"
 	end
-	return invoke(self._remotes, "Search", { asset_ids = options.asset_ids })
+	return invoke(getRemotes(self), "Search", { asset_ids = options.asset_ids })
 end
 
 -- Find tracks that sound similar to a given track. Polymorphic input —
@@ -141,7 +158,7 @@ function AudioScapeClient.similar(
 		return nil, "similar requires an asset_id string, a track table, a Sound, or an AudioPlayer"
 	end
 	local opts: any = extras or (type(input) == "table" and input or {})
-	return invoke(self._remotes, "Similar", {
+	return invoke(getRemotes(self), "Similar", {
 		asset_id = assetId,
 		limit = opts.limit,
 		offset = opts.offset,
@@ -156,7 +173,7 @@ function AudioScapeClient.sfxSearch(
 	self: AudioScapeClientInstance,
 	options: { query: string?, limit: number?, offset: number?, sort: string?, filters: any? }
 )
-	return invoke(self._remotes, "SfxSearch", options)
+	return invoke(getRemotes(self), "SfxSearch", options)
 end
 
 -- Find sound effects acoustically similar to a given asset. Polymorphic
@@ -179,7 +196,7 @@ function AudioScapeClient.sfxSimilar(
 		return nil, "sfxSimilar requires an asset_id string, a track table, a Sound, or an AudioPlayer"
 	end
 	local opts: any = extras or (type(input) == "table" and input or {})
-	return invoke(self._remotes, "SfxSimilar", {
+	return invoke(getRemotes(self), "SfxSimilar", {
 		asset_id = assetId,
 		limit = opts.limit,
 		offset = opts.offset,
@@ -191,7 +208,7 @@ end
 
 -- Fetch the SFX taxonomy hierarchy (broader_category → category → subcategory).
 function AudioScapeClient.getSfxTaxonomy(self: AudioScapeClientInstance)
-	return invoke(self._remotes, "GetSfxTaxonomy")
+	return invoke(getRemotes(self), "GetSfxTaxonomy")
 end
 
 -- Browse by artist, album, genre, mood, or trending. `sort` defaults to
@@ -208,7 +225,7 @@ function AudioScapeClient.browse(
 		region: string?,
 	}
 )
-	return invoke(self._remotes, "Browse", options)
+	return invoke(getRemotes(self), "Browse", options)
 end
 
 -- Browse the SFX catalog. v1 only supports type='trending'.
@@ -216,17 +233,17 @@ function AudioScapeClient.sfxBrowse(
 	self: AudioScapeClientInstance,
 	options: { type: string, name: string?, limit: number?, offset: number?, region: string? }
 )
-	return invoke(self._remotes, "SfxBrowse", options)
+	return invoke(getRemotes(self), "SfxBrowse", options)
 end
 
 -- Fetch a configured playlist and its tracks.
 function AudioScapeClient.getPlaylist(self: AudioScapeClientInstance, options: { playlist_id: string })
-	return invoke(self._remotes, "GetPlaylist", options)
+	return invoke(getRemotes(self), "GetPlaylist", options)
 end
 
 -- List all playlists configured for the API key.
 function AudioScapeClient.listPlaylists(self: AudioScapeClientInstance)
-	return invoke(self._remotes, "ListPlaylists")
+	return invoke(getRemotes(self), "ListPlaylists")
 end
 
 -- Native SearchAudioAsync returns 30 results per page; match it so paging
@@ -272,7 +289,7 @@ function AudioScapeClient.getAssetService(self: AudioScapeClientInstance, option
 	local opts: AssetServiceOptions = options or {}
 	local useFallback = opts.fallback ~= false
 	local pageSize = opts.limit or NATIVE_AUDIO_PAGE_SIZE
-	local remotes = self._remotes
+	local remotes = getRemotes(self)
 
 	local shim = {} :: any
 
@@ -354,7 +371,7 @@ function AudioScapeClient.getStructure(self: AudioScapeClientInstance, input: As
 	if not assetId then
 		return nil, "getStructure requires an asset_id string, a track table, a Sound, or an AudioPlayer"
 	end
-	return invoke(self._remotes, "GetStructure", { asset_id = assetId })
+	return invoke(getRemotes(self), "GetStructure", { asset_id = assetId })
 end
 
 return AudioScapeClient

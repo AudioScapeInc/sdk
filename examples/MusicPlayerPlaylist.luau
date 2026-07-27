@@ -14,11 +14,11 @@ local AudioScape = require(ServerStorage.AudioScape)
 
 local apiKey = if RunService:IsStudio() then "your-test-key" else HttpService:GetSecret("AudioScapeKey")
 
-local client = AudioScape.new(apiKey)
-local player = client:createPlayer({ volume = 0.5 })
+AudioScape.setApiKey(apiKey)
+local player = AudioScape:createPlayer({ volume = 0.5 })
 
 -- Fetch playlists
-local list, listErr = client:listPlaylists()
+local list, listErr = AudioScape:listPlaylists()
 if not list or #list.playlists == 0 then
 	warn("No playlists found:", listErr or "none configured")
 	return
@@ -28,7 +28,7 @@ end
 local playlistInfo = list.playlists[1]
 print(string.format("Loading playlist: %s (%s)", playlistInfo.name, playlistInfo.genre))
 
-local result, err = client:getPlaylist({ playlist_id = playlistInfo.id })
+local result, err = AudioScape:getPlaylist({ playlist_id = playlistInfo.id })
 if not result then
 	warn("Failed to fetch playlist:", err)
 	return

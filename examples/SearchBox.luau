@@ -21,7 +21,7 @@ local AudioScape = require(ServerScriptService.Packages.AudioScape)
 
 local apiKey = if RunService:IsStudio() then "your-test-key" else HttpService:GetSecret("AudioScapeKey")
 
-local client = AudioScape.new(apiKey)
+AudioScape.setApiKey(apiKey)
 
 local searchEvent = ReplicatedStorage:WaitForChild("SearchRequest") :: RemoteEvent
 
@@ -30,7 +30,7 @@ searchEvent.OnServerEvent:Connect(function(player: Player, query: unknown)
 		return
 	end
 
-	local result, err = client:search({
+	local result, err = AudioScape:search({
 		query = query :: string,
 		limit = 10,
 		playerId = player.UserId,

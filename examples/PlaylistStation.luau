@@ -15,10 +15,10 @@ local AudioScape = require(ServerScriptService.Packages.AudioScape)
 
 local apiKey = if RunService:IsStudio() then "your-test-key" else HttpService:GetSecret("AudioScapeKey")
 
-local client = AudioScape.new(apiKey)
+AudioScape.setApiKey(apiKey)
 
 -- Step 1: List all playlists for this API key
-local list, listErr = client:listPlaylists()
+local list, listErr = AudioScape:listPlaylists()
 if not list or #list.playlists == 0 then
 	warn("No playlists found:", listErr or "none configured")
 	return
@@ -31,7 +31,7 @@ end
 
 -- Step 2: Fetch the first playlist's tracks
 local playlistInfo = list.playlists[1]
-local result, err = client:getPlaylist({ playlist_id = playlistInfo.id })
+local result, err = AudioScape:getPlaylist({ playlist_id = playlistInfo.id })
 if not result then
 	warn("Failed to fetch playlist:", err)
 	return

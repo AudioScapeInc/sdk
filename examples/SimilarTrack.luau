@@ -15,7 +15,7 @@ local AudioScape = require(ServerScriptService.Packages.AudioScape)
 
 local apiKey = if RunService:IsStudio() then "your-test-key" else HttpService:GetSecret("AudioScapeKey")
 
-local client = AudioScape.new(apiKey)
+AudioScape.setApiKey(apiKey)
 
 local function getAssetId(sound: Sound): string?
 	local match = string.match(sound.SoundId, "%d+")
@@ -23,7 +23,7 @@ local function getAssetId(sound: Sound): string?
 end
 
 local function playNext(currentAssetId: string)
-	local result, err = client:similar({
+	local result, err = AudioScape:similar({
 		asset_id = currentAssetId,
 		limit = 5,
 	})

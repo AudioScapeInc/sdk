@@ -2,7 +2,7 @@
 --[[
 	AssetServiceDropIn Example
 
-	Swaps game:GetService("AssetService") for client:getAssetService() and
+	Swaps game:GetService("AssetService") for AudioScape:getAssetService() and
 	leaves the rest of the call site alone — same AudioSearchParams, same
 	AudioPages iteration. Search runs against AudioScape's catalog instead of
 	Roblox's keyword index; everything else on the service still forwards to
@@ -17,10 +17,10 @@ local AudioScape = require(ServerScriptService.Packages.AudioScape)
 
 local apiKey = if RunService:IsStudio() then "your-test-key" else HttpService:GetSecret("AudioScapeKey")
 
-local client = AudioScape.new(apiKey)
+AudioScape.setApiKey(apiKey)
 
 -- The one line that changes. Everything below is ordinary AssetService code.
-local AssetService = client:getAssetService()
+local AssetService = AudioScape:getAssetService()
 
 local params = Instance.new("AudioSearchParams")
 params.SearchKeyword = "rainy night city jazz"
