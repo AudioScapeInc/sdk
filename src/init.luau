@@ -414,12 +414,49 @@ export type PlaylistOptions = {
 	playerId: number?,
 }
 
+-- A slot of interchangeable sounds. Sound effects fire on events rather than
+-- playing in sequence, so an SFX playlist is grouped by slot, not ordered.
+export type PlaylistSlot = {
+	label: string,
+	asset_ids: { string },
+}
+
 export type PlaylistInfo = {
 	id: string,
 	name: string,
 	genre: string,
 	playback_mode: string,
 	track_count: number,
+	-- "music", "sfx", or "mixed". Absent on responses from before SFX support.
+	kind: string?,
+	sound_count: number?,
+	slots: { PlaylistSlot }?,
+}
+
+-- A sound in a playlist. Same shape as an sfxSearch result plus the two fields
+-- that only mean something inside a playlist.
+export type PlaylistSound = {
+	asset_id: string,
+	name: string,
+	description: string,
+	category: string,
+	subcategory: string,
+	tags: string,
+	duration: number,
+	created_at: string,
+	updated_at: string,
+	creator_id: number?,
+	creator_name: string,
+	-- Where the audio actually starts and stops, from our analysis. Trimming to
+	-- sound_start_sec removes the leading silence that makes an impact feel late.
+	sound_start_sec: number?,
+	sound_end_sec: number?,
+	true_peak_dbtp: number?,
+	play_count: number,
+	like_count: number,
+	-- The slot this sound belongs to; sounds sharing a label are variants.
+	label: string?,
+	position: number,
 }
 
 export type PlaylistTrack = {
@@ -441,6 +478,9 @@ export type PlaylistTrack = {
 export type PlaylistResult = {
 	playlist: PlaylistInfo,
 	tracks: { PlaylistTrack },
+	-- Sound effects, kept separate from `tracks` rather than unioned into it so
+	-- neither list needs a type test before use.
+	sounds: { PlaylistSound }?,
 	meta: { total: number },
 }
 

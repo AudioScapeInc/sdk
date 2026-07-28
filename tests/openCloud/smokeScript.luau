@@ -26,6 +26,7 @@ type Fixtures = {
 	music_asset_id_with_structure: string?,
 	sfx_asset_id: string?,
 	playlist_id: string?,
+	sfx_playlist_id: string?,
 }
 
 -- Dynamic require of a deserialized ModuleScript — luau-lsp can't statically
@@ -72,6 +73,7 @@ local fixtures: Fixtures = {
 	music_asset_id_with_structure = nil,
 	sfx_asset_id = nil,
 	playlist_id = nil,
+	sfx_playlist_id = nil,
 }
 
 step("browse_trending", function()
@@ -325,7 +327,15 @@ step("listPlaylists", function()
 	if #r.playlists > 0 then
 		fixtures.playlist_id = r.playlists[1].id
 	end
-	return { total = r.meta.total, returned = #r.playlists }
+	-- A sound bank is a playlist of SFX, so it comes back from the same list.
+	-- Recorded separately because the two feed different steps below.
+	for _, p in r.playlists do
+		if p.kind == "sfx" then
+			fixtures.sfx_playlist_id = p.id
+			break
+		end
+	end
+	return { total = r.meta.total, returned = #r.playlists, sfx = fixtures.sfx_playlist_id }
 end)
 
 step("getPlaylist", function()
@@ -338,6 +348,29 @@ step("getPlaylist", function()
 	assert(r.playlist.id == id, "returned id matches requested")
 	assert(#r.tracks == r.playlist.track_count, "tracks length matches track_count")
 	return { id = r.playlist.id, name = r.playlist.name, tracks = #r.tracks }
+end)
+
+step("getPlaylist (sfx)", function()
+	local id = fixtures.sfx_playlist_id
+	if not id then
+		return "skipped — no sfx playlists for this key"
+	end
+	local r, err = client:getPlaylist({ playlist_id = id })
+	assert(r, "getPlaylist(sfx) failed: " .. tostring(err))
+	assert(r.playlist.kind == "sfx", "kind is sfx; got " .. tostring(r.playlist.kind))
+	assert(r.sounds and #r.sounds > 0, "sounds returned")
+	assert(#r.tracks == 0, "an sfx playlist carries no music tracks")
+	assert(r.playlist.slots and #r.playlist.slots > 0, "slots returned")
+
+	-- Every sound belongs to a slot, and the slots account for every sound.
+	local inSlots = 0
+	for _, slot in r.playlist.slots do
+		assert(#slot.asset_ids > 0, "slot '" .. tostring(slot.label) .. "' is not empty")
+		inSlots += #slot.asset_ids
+	end
+	assert(inSlots == #r.sounds, "slots cover every sound: " .. tostring(inSlots) .. " vs " .. tostring(#r.sounds))
+
+	return { id = r.playlist.id, slots = #r.playlist.slots, sounds = #r.sounds }
 end)
 
 -- Analytics: enqueue one event per public track method, force-flush, assert
@@ -546,6 +579,53 @@ step("auditAudio", function()
 		audit.meta.distinct_assets,
 		entry.uses
 	)
+end)
+
+-- A bank built from a portal-curated sound bank. The slots are used exactly as
+-- chosen, so this asserts the pools match what the playlist declared rather than
+-- whatever similarity would have produced.
+step("createSoundBank (from playlist)", function()
+	local id = fixtures.sfx_playlist_id
+	if not id then
+		return "skipped — no sfx playlists for this key"
+	end
+
+	local declared, err = client:getPlaylist({ playlist_id = id })
+	assert(declared, "getPlaylist failed: " .. tostring(err))
+
+	local bank = client:createSoundBank({ playlist_id = id })
+	local ok, resolveErr = bank:resolveAsync()
+	assert(ok, "resolveAsync from playlist failed: " .. tostring(resolveErr))
+
+	local slots = 0
+	for _, slot in declared.playlist.slots do
+		slots += 1
+		local pool = bank:getPool(slot.label)
+		assert(
+			#pool == #slot.asset_ids,
+			"slot '" .. slot.label .. "' pool is " .. tostring(#pool) .. ", declared " .. tostring(#slot.asset_ids)
+		)
+		for i, assetId in slot.asset_ids do
+			assert(pool[i] == assetId, "slot '" .. slot.label .. "' differs at index " .. tostring(i))
+		end
+		assert(
+			bank.Pools[slot.label].source == "playlist",
+			"source should be 'playlist', got " .. tostring(bank.Pools[slot.label].source)
+		)
+
+		-- Picking must still avoid immediate repeats on a curated pool.
+		if #pool > 1 then
+			local previous = nil
+			for n = 1, 20 do
+				local pick = bank:pick(slot.label)
+				assert(pick, "pick returned nil at " .. tostring(n))
+				assert(pick ~= previous, "immediate repeat at " .. tostring(n))
+				previous = pick
+			end
+		end
+	end
+
+	return string.format("slots=%d", slots)
 end)
 
 -- createSoundBank. The bridging path calls AssetService:GetAudioMetadataAsync,

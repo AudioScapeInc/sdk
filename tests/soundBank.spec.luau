@@ -312,3 +312,137 @@ do
 	end)
 	assert(not okSeed, "unusable seed id rejected")
 end
+
+-- 14. A bank sourced from a portal-curated playlist uses each slot exactly as
+--     chosen. Quietly expanding a slot with similar sounds would put audio the
+--     developer never reviewed into their game — the same mistake as
+--     auto-refreshing a gunshot.
+do
+	local http = mockHttp.new()
+	local sdk = loadSdk({ http = http })
+	local AudioScape: any = sdk
+	AudioScape.setApiKey("test-key")
+
+	http:queueResponse({
+		Success = true,
+		StatusCode = 200,
+		Body = serde.encode("json", {
+			playlist = {
+				id = "sfx-123",
+				name = "Bank",
+				genre = "",
+				playback_mode = "order",
+				track_count = 0,
+				sound_count = 4,
+				kind = "sfx",
+				slots = {
+					{ label = "footstep", asset_ids = { "111", "222", "333" } },
+					{ label = "impact", asset_ids = { "444" } },
+				},
+			},
+			tracks = {},
+			sounds = {},
+			meta = { total = 4 },
+		}),
+	})
+
+	local bank = AudioScape:createSoundBank({ playlist_id = "sfx-123" })
+	local ok, err = bank:resolveAsync()
+	assert(ok, "resolve from playlist failed: " .. tostring(err))
+	assert(#http.requests == 1, "one request — the playlist fetch; got " .. tostring(#http.requests))
+
+	local footstep = bank:getPool("footstep")
+	assert(#footstep == 3, "the slot is the pool, verbatim; got " .. tostring(#footstep))
+	assert(footstep[1] == "111", "order preserved; got " .. tostring(footstep[1]))
+	assert(#bank:getPool("impact") == 1, "single-sound slot stays a single-sound pool")
+	assert(bank.Pools.footstep.source == "playlist", "source reports 'playlist'")
+	assert(bank.IsResolved, "IsResolved set")
+end
+
+-- 15. Picking still refuses immediate repeats on a playlist-sourced pool.
+do
+	local http = mockHttp.new()
+	local sdk = loadSdk({ http = http })
+	local AudioScape: any = sdk
+	AudioScape.setApiKey("test-key")
+
+	http:queueResponse({
+		Success = true,
+		StatusCode = 200,
+		Body = serde.encode("json", {
+			playlist = {
+				id = "sfx-9",
+				name = "B",
+				genre = "",
+				playback_mode = "order",
+				track_count = 0,
+				slots = { { label = "step", asset_ids = { "1", "2", "3" } } },
+			},
+			tracks = {},
+			meta = { total = 3 },
+		}),
+	})
+
+	local bank = AudioScape:createSoundBank({ playlist_id = "sfx-9" })
+	bank:resolveAsync()
+
+	local previous: string? = nil
+	for i = 1, 100 do
+		local pick = bank:pick("step")
+		assert(pick, "pick returned nil at " .. tostring(i))
+		assert(pick ~= previous, "immediate repeat at " .. tostring(i))
+		previous = pick
+	end
+
+	-- reportUnavailable still heals a curated pool.
+	assert(bank:reportUnavailable("2"), "first report returns true")
+	for i = 1, 40 do
+		assert(bank:pick("step") ~= "2", "unavailable sound never picked (" .. tostring(i) .. ")")
+	end
+end
+
+-- 16. Validation and failure paths for the playlist source
+do
+	local http = mockHttp.new()
+	local sdk = loadSdk({ http = http })
+	local AudioScape: any = sdk
+	AudioScape.setApiKey("test-key")
+
+	local okBoth = pcall(function()
+		AudioScape:createSoundBank({ seeds = { s = "1" }, playlist_id = "sfx-1" })
+	end)
+	assert(not okBoth, "seeds and playlist_id together are rejected")
+
+	local okNeither = pcall(function()
+		AudioScape:createSoundBank({})
+	end)
+	assert(not okNeither, "neither seeds nor playlist_id is rejected")
+
+	local okEmpty = pcall(function()
+		AudioScape:createSoundBank({ playlist_id = "" })
+	end)
+	assert(not okEmpty, "empty playlist_id is rejected")
+
+	-- A playlist that can't be fetched fails the resolve rather than yielding a
+	-- silently empty bank that picks nil at runtime.
+	http:queueResponse({ Success = false, StatusCode = 404, Body = "" })
+	local missing = AudioScape:createSoundBank({ playlist_id = "sfx-nope" })
+	local ok404 = missing:resolveAsync()
+	assert(not ok404, "a 404 playlist fails the resolve")
+	assert(not missing.IsResolved, "and leaves the bank unresolved")
+
+	-- A music playlist has no slots; say so rather than resolving to nothing.
+	http:queueResponse({
+		Success = true,
+		StatusCode = 200,
+		Body = serde.encode("json", {
+			playlist = { id = "m", name = "M", genre = "", playback_mode = "order", track_count = 5, slots = {} },
+			tracks = {},
+			meta = { total = 5 },
+		}),
+	})
+	local musicBank = AudioScape:createSoundBank({ playlist_id = "music-1" })
+	local okMusic, errMusic = musicBank:resolveAsync()
+	assert(not okMusic, "a playlist with no slots fails the resolve")
+	assert(tostring(errMusic):find("slots", 1, true), "error says why; got: " .. tostring(errMusic))
+end
