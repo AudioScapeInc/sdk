@@ -128,8 +128,8 @@ function AudioScapeClient.search(
 	return invoke(getRemotes(self), "Search", options)
 end
 
--- Sugar over client:search for known-asset-ID batch lookups.
--- Equivalent to client:search({ asset_ids = options.asset_ids }).
+-- Sugar over AudioScape:search for known-asset-ID batch lookups.
+-- Equivalent to AudioScape:search({ asset_ids = options.asset_ids }).
 function AudioScapeClient.lookup(self: AudioScapeClientInstance, options: { asset_ids: { string } }): (any, string?)
 	if type(options) ~= "table" or type(options.asset_ids) ~= "table" or #options.asset_ids == 0 then
 		return nil, "lookup requires a non-empty asset_ids array of numeric strings"

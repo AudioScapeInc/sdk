@@ -10,7 +10,7 @@
 	e.g. an AudioEmitter for spatial audio — via PlayerOptions.output).
 
 	Usage:
-		local player = client:createPlayer()
+		local player = AudioScape:createPlayer()
 		player:queue(result.tracks)
 		player:play()
 		player:skip()  -- auto-tracks skip with listen duration
