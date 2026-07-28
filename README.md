@@ -12,7 +12,7 @@ Add to your `wally.toml`:
 
 ```toml
 [server-dependencies]
-AudioScape = "this-fifo/audioscape-sdk@0.16.0"
+AudioScape = "this-fifo/audioscape-sdk@0.17.0"
 ```
 
 Then run:
@@ -49,11 +49,11 @@ local apiKey = if RunService:IsStudio()
     then "your-test-key"
     else HttpService:GetSecret("AudioScapeKey")
 
-local client = AudioScape.new(apiKey)
-local player = client:createPlayer()
+AudioScape.setApiKey(apiKey)
+local player = AudioScape:createPlayer()
 
 -- Search and play
-local result, err = client:search({ query = "chill lo-fi beats", limit = 10 })
+local result, err = AudioScape:search({ query = "chill lo-fi beats", limit = 10 })
 if result then
     player:queue(result.tracks)
     player:play()
@@ -67,7 +67,7 @@ The `AudioScapeMusicPlayer` handles Sound lifecycle, queue advancement, and anal
 The SDK automatically sends your game's Universe ID and Place ID with every request to help you track usage across your experiences. You can also pass an optional `playerId` to tie requests to specific players:
 
 ```lua
-local result, err = client:search({
+local result, err = AudioScape:search({
     query = "epic battle music",
     playerId = player.UserId,
 })
@@ -75,20 +75,51 @@ local result, err = client:search({
 
 ## API
 
-### `AudioScape.new(apiKey: string)`
+### `AudioScape.setApiKey(apiKey)`
 
-Creates a new client instance.
+Points the module at your API key. After this, call every method on `AudioScape` itself — there's no object to create or name.
 
 ```lua
-local client = AudioScape.new("your-api-key")
+AudioScape.setApiKey("your-api-key")
 ```
 
-### `client:search(options)`
+Accepts a plain string or the `Secret` userdata returned by `HttpService:GetSecret()`, which is what you should use in production so the key never exists as a string in your code.
+
+### `AudioScape.new(apiKey)` *(advanced)*
+
+Returns a separate object with its own key. You only need this if one server has to talk to AudioScape under more than one API key — otherwise use `setApiKey`.
+
+```lua
+local secondary = AudioScape.new("another-api-key")
+local result = secondary:search({ query = "chill lo-fi" })
+```
+
+### `AudioScape.setEndpoints(options)` *(advanced)*
+
+Points the SDK at a different API host. You only need this to develop against a locally-running API or a staging environment.
+
+```lua
+AudioScape.setEndpoints({
+    baseUrl = "http://localhost:3000/developer",
+    analyticsUrl = "http://localhost:3001/analytics",
+})
+```
+
+| Option | Type | Default |
+| --- | --- | --- |
+| `baseUrl` | `string?` | `https://api.audioscape.ai/developer` |
+| `analyticsUrl` | `string?` | `https://api.audioscape.ai/analytics` |
+
+Omitted fields keep their current value, and it's safe to call before or after `setApiKey`. Trailing slashes are trimmed.
+
+> **Note:** Roblox Studio can reach `http://localhost`, but a published Roblox server cannot. This is a development affordance, not a deployment mechanism.
+
+### `AudioScape:search(options)`
 
 Search the catalog using natural language, or look up specific tracks by asset ID.
 
 ```lua
-local result, err = client:search({
+local result, err = AudioScape:search({
     query = "epic orchestral battle music",  -- required (unless asset_ids set)
     limit = 20,                              -- optional (default: 20, max: 100)
     offset = 0,                              -- optional
@@ -110,22 +141,22 @@ local result, err = client:search({
 ```
 
 `query` is required unless you pass `asset_ids` for a direct batch lookup
-(see `client:lookup` below). Pass either one. When both are present, the API
+(see `AudioScape:lookup` below). Pass either one. When both are present, the API
 prefers `asset_ids` and skips text search. `result.meta.search_method` will be
 `"semantic"` / `"text"` / `"id"` / `"ids-batch"` depending on how the
 request resolved.
 
 **Result ordering:** pass `sort = "popular"` to rank by popularity (most-played first) or `sort = "recent"` for newest-first; omit `sort` (or use `"relevance"`) for the default best-match ordering. `result.meta.sort` echoes the applied ordering. (`sort` is ignored for `asset_ids` lookups.)
 
-### `client:lookup(options)`
+### `AudioScape:lookup(options)`
 
 Resolve up to 100 known asset IDs in a single request. Returned tracks are in
 input order, filters are bypassed, and IDs that didn't match (deleted,
 delisted, non-public, or never existed) come back in `result.meta.missing_ids`.
-Sugar over `client:search({ asset_ids = ... })`.
+Sugar over `AudioScape:search({ asset_ids = ... })`.
 
 ```lua
-local result, err = client:lookup({
+local result, err = AudioScape:lookup({
     asset_ids = { "1843209165", "9120386436", "1234567890" },
     playerId = player.UserId,  -- optional
 })
@@ -133,14 +164,14 @@ local result, err = client:lookup({
 -- result.meta.missing_ids = { "1234567890" }  -- IDs that didn't resolve
 ```
 
-### `client:similar(input, extras?)`
+### `AudioScape:similar(input, extras?)`
 
 Find tracks that sound similar to a given track. `input` is anything that
 carries an asset_id — a string, a Track from a previous response, a `Sound`,
 or an `AudioPlayer`.
 
 ```lua
-local result, err = client:similar({
+local result, err = AudioScape:similar({
     asset_id = "123456789",      -- required
     limit = 10,                  -- optional
     offset = 0,                  -- optional
@@ -153,30 +184,30 @@ local result, err = client:similar({
 -- result = { tracks, meta }
 
 -- Shorthand: pass a Track from a previous result
-local result = client:similar(playlist.tracks[1], { limit = 10 })
+local result = AudioScape:similar(playlist.tracks[1], { limit = 10 })
 
 -- Shorthand: pass a playing Sound directly
-local result = client:similar(soundInstance)
+local result = AudioScape:similar(soundInstance)
 ```
 
-### `client:browse(options)`
+### `AudioScape:browse(options)`
 
 Browse by artist, album, genre, mood, or trending.
 
 ```lua
 -- List all genres
-local result, err = client:browse({ type = "genre" })
+local result, err = AudioScape:browse({ type = "genre" })
 -- result = { items, meta }
 
 -- Get tracks for a specific genre (defaults to popularity-ranked)
-local result, err = client:browse({ type = "genre", name = "electronic", limit = 20 })
+local result, err = AudioScape:browse({ type = "genre", name = "electronic", limit = 20 })
 -- result = { tracks, meta }
 
 -- Same drill-down, alpha sort to surface fresh uploads
-local result, err = client:browse({ type = "genre", name = "electronic", sort = "alpha", limit = 20 })
+local result, err = AudioScape:browse({ type = "genre", name = "electronic", sort = "alpha", limit = 20 })
 
 -- Trending music (no name needed — returns the top tracks directly)
-local result, err = client:browse({ type = "trending", limit = 50 })
+local result, err = AudioScape:browse({ type = "trending", limit = 50 })
 -- result = { tracks, meta }
 ```
 
@@ -190,34 +221,34 @@ Trending is a popularity-ranked list of music tracks refreshed daily, capped at 
 
 ```lua
 -- Auto-detected regional trending (falls back to global if unavailable)
-local result, err = client:browse({ type = "trending", region = "auto", limit = 50 })
+local result, err = AudioScape:browse({ type = "trending", region = "auto", limit = 50 })
 
 -- Explicit region
-local result, err = client:browse({ type = "trending", region = "eu", limit = 50 })
+local result, err = AudioScape:browse({ type = "trending", region = "eu", limit = 50 })
 ```
 
 > Regional trending must be enabled for your API key. Until then, `region` is ignored and you get the global list. Contact us via the [Developer Portal](https://developer.audioscape.ai) to enable it.
 
-### `client:sfxBrowse(options)`
+### `AudioScape:sfxBrowse(options)`
 
 Browse the SFX catalog. v1 only supports `type = "trending"` — a popularity-ranked list of sound effects, refreshed daily on the same schedule as music trending.
 
 ```lua
-local result, err = client:sfxBrowse({ type = "trending", limit = 50 })
+local result, err = AudioScape:sfxBrowse({ type = "trending", limit = 50 })
 -- result = { tracks, meta }
 -- result.tracks = { { asset_id, name, description, category, subcategory, tags, duration, ... } }
 
 -- Scope to a region (same options as music trending; requires regional
 -- trending to be enabled for your API key — otherwise the global list)
-local result, err = client:sfxBrowse({ type = "trending", region = "auto", limit = 50 })
+local result, err = AudioScape:sfxBrowse({ type = "trending", region = "auto", limit = 50 })
 ```
 
-### `client:sfxSearch(options)`
+### `AudioScape:sfxSearch(options)`
 
 Search the sound effects catalog. Pass a free-text `query`, or browse a UCS category by passing `filters.categories` (the API synthesizes the query under the hood).
 
 ```lua
-local result, err = client:sfxSearch({
+local result, err = AudioScape:sfxSearch({
     query = "metal sword impact short",  -- optional if filters.categories is set
     limit = 20,                          -- optional (default: 20, max: 100)
     offset = 0,                          -- optional
@@ -235,13 +266,13 @@ local result, err = client:sfxSearch({
 
 **Result ordering:** like music search, pass `sort = "popular"` (most-popular first) or `sort = "recent"` (newest first); omit for the default relevance ordering.
 
-### `client:sfxSimilar(input, extras?)`
+### `AudioScape:sfxSimilar(input, extras?)`
 
 Find sound effects acoustically similar to a given asset. Same polymorphic
-input as `client:similar`.
+input as `AudioScape:similar`.
 
 ```lua
-local result, err = client:sfxSimilar({
+local result, err = AudioScape:sfxSimilar({
     asset_id = "9120386436",     -- required
     limit = 10,                  -- optional
     offset = 0,                  -- optional
@@ -254,26 +285,26 @@ local result, err = client:sfxSimilar({
 -- result = { tracks, meta }
 
 -- Or pass an SfxTrack / Sound / asset_id string:
-local result = client:sfxSimilar(sfx.tracks[1], { limit = 10 })
+local result = AudioScape:sfxSimilar(sfx.tracks[1], { limit = 10 })
 ```
 
-### `client:getSfxTaxonomy()`
+### `AudioScape:getSfxTaxonomy()`
 
 Fetch the full `broader_category → category → subcategory` hierarchy for building SFX picker UIs. Server-cached for 10 minutes, so polling is cheap.
 
 ```lua
-local taxonomy, err = client:getSfxTaxonomy()
+local taxonomy, err = AudioScape:getSfxTaxonomy()
 -- taxonomy.taxonomy = { { broader_category, categories = { { category, subcategories = { string } } } } }
 ```
 
-### `client:getStructure(input, extras?)`
+### `AudioScape:getStructure(input, extras?)`
 
 Fetch the beat grid and section structure for a track. Use this to sync
 animations, lighting, or VFX to the music. Same polymorphic input as
-`client:similar` — pass a string, a Track, a `Sound`, or an `AudioPlayer`.
+`AudioScape:similar` — pass a string, a Track, a `Sound`, or an `AudioPlayer`.
 
 ```lua
-local structure, err = client:getStructure({
+local structure, err = AudioScape:getStructure({
     asset_id = "1843209165",  -- required
 })
 -- structure = { asset_id, duration, bpm, track_energy, beat_grid, sections, phrases }
@@ -284,39 +315,39 @@ local structure, err = client:getStructure({
 --                      shorter). Both carry the same label set.
 
 -- Or pull structure straight from the playing Sound:
-local structure = client:getStructure(soundInstance)
+local structure = AudioScape:getStructure(soundInstance)
 ```
 
 `label` values come from: `Intro`, `Verse`, `Chorus`, `Drop`, `Bridge`, `Climax`, `Outro`, `Main`, `Break`, `Build`, `Breakdown`, `Transition`, `Peak`. `energy` is `1`–`4`.
 
 > **Note on AudioPlayer:** v0.11.0 auto-resolves `audioPlayer.Asset` (the legacy ContentId field). If your project uses the newer `audioPlayer.AudioContent` (a `Content` userdata), pass `audioPlayer.AudioContent.Uri` yourself for now.
 
-### `client:beatAtTime(asset_id, t)`
+### `AudioScape:beatAtTime(asset_id, t)`
 
 Locate the closest beat to a time. Useful for snapping animations to the grid. Reuses the cached structure response, so repeat calls are free.
 
 ```lua
-local beat, err = client:beatAtTime("1843209165", currentTime)
+local beat, err = AudioScape:beatAtTime("1843209165", currentTime)
 -- beat = { time, is_downbeat, bar }
 ```
 
-### `client:sectionAtTime(asset_id, t, level?)`
+### `AudioScape:sectionAtTime(asset_id, t, level?)`
 
 Locate the section (or phrase, with `level = "phrase"`) covering a time. Trigger different effects on Verse vs Drop. `level` defaults to `"section"` (the finer layer); pass `"phrase"` for the coarser groupings — better for longer transitions like crossfades.
 
 ```lua
-local section = client:sectionAtTime("1843209165", currentTime)
+local section = AudioScape:sectionAtTime("1843209165", currentTime)
 if section and section.label == "Drop" then
     workspace.CurrentCamera.FieldOfView = 70 + section.energy * 5
 end
 ```
 
-### `client:getPlaylist(options)`
+### `AudioScape:getPlaylist(options)`
 
 Fetch a configured playlist and its tracks. Playlists are created in the [Developer Portal](https://developer.audioscape.ai/configure).
 
 ```lua
-local result, err = client:getPlaylist({
+local result, err = AudioScape:getPlaylist({
     playlist_id = "station-electronic-1712...",  -- required
     playerId = player.UserId,                    -- optional
 })
@@ -325,12 +356,12 @@ local result, err = client:getPlaylist({
 -- result.tracks = { { asset_id, name, artist, album, genre, duration, bpm, position, ... } }
 ```
 
-### `client:listPlaylists(playerId?)`
+### `AudioScape:listPlaylists(playerId?)`
 
 List all playlists configured for your API key.
 
 ```lua
-local result, err = client:listPlaylists(player.UserId)
+local result, err = AudioScape:listPlaylists(player.UserId)
 -- result = { playlists, meta }
 -- result.playlists = { { id, name, genre, playback_mode, track_count } }
 
@@ -341,16 +372,218 @@ if result then
 end
 ```
 
+## Drop-in for `AssetService`
+
+If you already call `AssetService:SearchAudioAsync`, you can point it at AudioScape by changing one line. The `AudioSearchParams` you build and the `AudioPages` you iterate stay exactly the same.
+
+```lua
+-- Before
+local AssetService = game:GetService("AssetService")
+
+-- After
+local AssetService = AudioScape:getAssetService()
+
+-- Unchanged from here down
+local params = Instance.new("AudioSearchParams")
+params.SearchKeyword = "calm ambient"
+
+local ok, pages = pcall(function()
+    return AssetService:SearchAudioAsync(params)
+end)
+if ok then
+    for _, audio in pages:GetCurrentPage() do
+        print(audio.Title, "—", audio.Artist, audio.Duration .. "s")
+    end
+end
+```
+
+### `AudioScape:getAssetService(options?)`
+
+Returns a stand-in for `AssetService`. `SearchAudioAsync` (and its deprecated `SearchAudio` alias) runs against AudioScape's catalog; **every other member forwards to the real service**, so unrelated calls like `GetAudioMetadataAsync`, `CreateEditableImage`, or `GetBundleDetailsAsync` behave exactly as before.
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `fallback` | `boolean?` | `true` | On an AudioScape error, fall through to the real `AssetService:SearchAudioAsync` instead of raising. Leave it on unless you'd rather see failures. |
+| `limit` | `number?` | `30` | Results per page. Matches native's page size by default. |
+
+**How `AudioSearchParams` maps.** `AudioSubType` picks the catalog — `Music` searches music, `SoundEffect` searches SFX. `SearchKeyword`, `Title`, `Artist`, and `Album` combine into the semantic query (AudioScape matches on meaning, not just keywords, and already handles artist matching). `Tag` becomes a genre filter for music or a category filter for SFX, and stands in as the query if you set nothing else. `MinDuration` / `MaxDuration` become a duration filter.
+
+**Results** carry every field native returns — `Id`, `Title`, `Artist`, `Description`, `Duration`, `Tags`, `AudioType`, `IsEndorsed`, `CreateTime`, `UpdateTime`, and `Creator` — plus extra AudioScape fields native has no equivalent for:
+
+| Field | Description |
+| --- | --- |
+| `AssetId` | The asset ID as a string, ready for `"rbxassetid://" .. audio.AssetId` |
+| `Score` | Relevance score for the query (0–1) |
+| `Genre` / `GenreSlug` | Canonical genre and its URL-safe slug (music only) |
+| `Bpm` | Tempo, when known (music only) |
+
+`IsEndorsed` is always `false` — that's Roblox's own endorsement flag and AudioScape doesn't track it. The field is present so code that reads it keeps working.
+
+Pagination works as usual: `pages:GetCurrentPage()`, `pages:AdvanceToNextPageAsync()`, and `pages.IsFinished`. Like native, `SearchAudioAsync` raises on failure rather than returning an error — wrap it in `pcall`.
+
+This also works from a LocalScript via `AudioScapeClient:getAssetService()` once you've called `AudioScape:enableClientAccess()` on the server.
+
+## Sound Banks
+
+A footstep that plays the identical clip every time reads as obviously synthetic — the "machine gun" effect. The usual fix is hand-picking five assets and calling `math.random`. A sound bank does it from the asset you already have.
+
+```lua
+local bank = AudioScape:createSoundBank({
+    seeds = { footstep = "rbxassetid://1837879082" },
+    kind = "sfx",
+})
+bank:resolveAsync()
+
+-- Later, on every step:
+sound.SoundId = "rbxassetid://" .. bank:pick("footstep")
+```
+
+`pick` never returns the same asset twice in a row.
+
+### `AudioScape:createSoundBank(options)`
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `seeds` | `{ [string]: string }` | — | Named asset IDs, e.g. `{ footstep = "rbxassetid://123" }` |
+| `kind` | `string?` | `"sfx"` | `"sfx"` expands through the sound-effects catalog, `"music"` through music |
+| `poolSize` | `number?` | `8` | How many assets to end up with per seed |
+| `mode` | `string?` | `"extend"` | `"extend"` keeps your asset in the pool and adds neighbours; `"replace"` uses neighbours only |
+| `playerId` | `number?` | — | |
+
+**Your asset is never silently swapped.** In the default `extend` mode it leads its own pool — we add to your choice rather than overriding it. `replace` exists for cases where you genuinely don't care which specific clip plays, and you have to ask for it.
+
+### Methods
+
+| Method | Description |
+| --- | --- |
+| `bank:resolveAsync()` | Build the pools. Returns `(ok, err)`. |
+| `bank:pick(name)` | An asset ID from that pool, never the same one twice running |
+| `bank:getPool(name)` | The whole pool as a list, e.g. to replicate to clients |
+| `bank:reportUnavailable(assetId)` | Drop an asset that failed to load; later picks avoid it |
+| `bank:flushPickCounts()` | Emit accumulated pick analytics |
+| `bank:destroy()` | Flush and clear |
+
+**Resolve once at startup.** Roblox caps a server at 500 HTTP requests per minute, so resolving per-play would exhaust the budget almost immediately. After `resolveAsync()`, every `pick` is a local table lookup with no request.
+
+### Seeding from assets we don't have
+
+If a seed isn't in AudioScape's catalog, the bank asks the engine what the asset *is* (`AssetService:GetAudioMetadataAsync`, which works for any Roblox audio ID) and searches on its title and artist to find an anchor. `bank.Pools[name].source` tells you which path was taken:
+
+| `source` | Meaning |
+| --- | --- |
+| `catalog` | The seed itself is in our catalog |
+| `bridged` | Matched through the engine's metadata for the seed |
+| `none` | Couldn't resolve — the pool is just your seed |
+
+`none` is a graceful degradation, not an error: you get back exactly the behaviour you had before adding the bank.
+
+### Healing broken assets
+
+A moderated or otherwise unavailable asset is a silent bug — it just doesn't play. Only a client can detect this: a headless server never fetches audio, so `GetAssetFetchStatus` stays `None` there forever. Watch it client-side and report back:
+
+```lua
+local ContentProvider = game:GetService("ContentProvider")
+
+ContentProvider.AssetFetchFailed:Connect(function(assetId)
+    reportFailureRemote:FireServer(assetId)  -- server calls bank:reportUnavailable
+end)
+```
+
+Once reported, that asset is excluded from future picks. If every asset in a pool becomes unavailable, `pick` falls back to your original seed rather than returning `nil`.
+
+### Analytics
+
+Picks are far too frequent to report individually — a footstep loop would overrun the 500-event buffer in seconds. The bank counts locally and `flushPickCounts()` emits one `audio_pick` event per distinct asset carrying a `count`. `resolveAsync()` emits one `audio_resolve` per seed, and `reportUnavailable` emits `audio_unavailable`.
+
+## Auditing your audio
+
+### `AudioScape:auditAudio(options?)`
+
+Walks your place for every `Sound` and `AudioPlayer`, collects the distinct asset IDs, and tells you which ones AudioScape's catalog knows about.
+
+```lua
+local audit, err = AudioScape:auditAudio()
+if audit then
+    print(audit.meta.distinct_assets .. " distinct audio assets in this place")
+    for _, asset in audit.assets do
+        print(string.format("%s — %d uses — %s", asset.asset_id, asset.uses, asset.sample_path))
+    end
+end
+```
+
+| Option | Type | Default |
+| --- | --- | --- |
+| `roots` | `{ Instance }?` | Workspace, ReplicatedStorage, ServerStorage, ServerScriptService, StarterGui, StarterPack, StarterPlayer, SoundService, Lighting |
+| `playerId` | `number?` | — |
+
+Results are ordered most-used first. Each entry gives:
+
+| Field | Description |
+| --- | --- |
+| `asset_id` | The asset ID as a string |
+| `uses` | How many instances reference it |
+| `sample_path` | `GetFullName()` of the first instance found, so you can jump to it |
+| `status` | See the status table under `checkAssetHealth` below |
+| `audio_type` | `"music"`, `"sfx"`, or `nil` |
+| `name` | Track name, when known |
+
+`meta` carries `instances_scanned`, `distinct_assets`, `ok`, `unavailable`, `private`, and `unknown`.
+
+Sounds with an empty `SoundId` are counted in `instances_scanned` but skipped otherwise, since an unassigned template is normal.
+
+### `AudioScape:checkAssetHealth(assetIds, playerId?)`
+
+Check whether specific assets are still playable, and whether AudioScape can offer similarity for them.
+
+```lua
+local health = AudioScape:checkAssetHealth({ "1837879082", "9046863579" })
+for _, asset in health.assets do
+    print(asset.asset_id, asset.status, asset.name)
+end
+```
+
+| `status` | Meaning |
+| --- | --- |
+| `ok` | Servable, and we can offer similarity and variation for it |
+| `moderated` | Taken down by Roblox moderation |
+| `deleted` | Deleted |
+| `delisted` | Removed from public listing |
+| `private` | A real asset your experience can play, but private to you — so we hold no copy and can't offer similarity |
+| `unknown` | Neither our catalog nor Roblox returns anything for it |
+
+`meta` carries `total`, `ok`, `unavailable`, `private`, and `unknown`. Accepts up to 100 IDs per call and batches internally.
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `playerId` | `number?` | — | |
+| `reportPrivate` | `boolean?` | `false` | Report any private assets found back to AudioScape, so they appear in the console with an option to share them |
+
+`reportPrivate` is **off by default**. The result is a list of your private catalog, and inferring consent from a diagnostic call isn't right — the determination is returned to you either way. A failed report never fails the health check.
+
+**Two sources are combined**, because neither is sufficient alone. AudioScape's catalog knows moderation state; only the Roblox engine knows whether an asset your experience can play exists at all. An asset the engine can describe but our catalog doesn't hold is **private to you**.
+
+#### Private audio
+
+Private audio keeps working. Sound banks never remove your seed, so your own assets play exactly as before — we only add public neighbours around them. In `mode = "replace"` we still keep your seed unless we resolved it from our own catalog, because a replacement might not be something your experience has permission to play.
+
+What we can't do is offer similarity or variation *for* a private asset, since we hold no copy.
+
+If you want that, pass `reportPrivate = true` and the assets appear in your console under **Advisor → Private audio in use**, where you can upload the file directly. We analyse it, and it's served back only to your API key — invisible to every other developer. Ask us and we delete both the file and the entitlement.
+
+Sharing the file rather than granting Roblox permissions is deliberate: a Roblox grant to an experience is permanent (per Roblox's docs, once a game is granted permission to use a restricted asset that permission cannot be revoked), and granting a creator requires friending them first. Handing over the file asks less and stays reversible.
+
+This walks the data model, so treat it as a startup or development diagnostic rather than something to poll. On a large place, pass a narrower `roots` list.
+
 ## Music Player
 
 The `AudioScapeMusicPlayer` manages audio playback — queue tracks, play, skip — and automatically fires `trackPlay`, `trackStop`, and `trackSkip` analytics events with accurate listen durations.
 
-### `client:createPlayer(options?)`
+### `AudioScape:createPlayer(options?)`
 
 Create an AudioScapeMusicPlayer instance.
 
 ```lua
-local player = client:createPlayer({
+local player = AudioScape:createPlayer({
     volume = 0.5,               -- optional (default: 0.5)
     parent = SoundService,      -- optional (default: SoundService)
     playerId = player.UserId,   -- optional, for per-player analytics
@@ -362,7 +595,7 @@ local player = client:createPlayer({
 Add tracks to the end of the play queue.
 
 ```lua
-local result = client:search({ query = "upbeat summer" })
+local result = AudioScape:search({ query = "upbeat summer" })
 player:queue(result.tracks)
 ```
 
@@ -396,7 +629,7 @@ player:skip()
 Play a single track immediately, replacing current playback.
 
 ```lua
-local result = client:search({ query = "epic boss battle", limit = 1 })
+local result = AudioScape:search({ query = "epic boss battle", limit = 1 })
 player:playTrack(result.tracks[1])
 ```
 
@@ -432,17 +665,17 @@ end
 
 ---
 
-## Client Access
+## Calling from LocalScripts
 
-The SDK runs on the server (HttpService requires server context). To call AudioScape from LocalScripts, enable client access on the server and use the `AudioScapeClient` companion module.
+`AudioScape` itself runs on the server — `HttpService` requires server context. To reach it from a LocalScript, enable access on the server and use the `AudioScapeClient` companion module on the client.
 
 ### Server Setup
 
 Call `enableClientAccess()` once on the server to create the RemoteFunctions:
 
 ```lua
-local client = AudioScape.new(apiKey)
-client:enableClientAccess()
+AudioScape.setApiKey(apiKey)
+AudioScape:enableClientAccess()
 ```
 
 This creates an `AudioScapeRemotes` folder in `ReplicatedStorage` with a RemoteFunction for each API method. Requests are rate-limited per player (1 request/second) and `playerId` is automatically set from the calling player.
@@ -455,11 +688,10 @@ Place `AudioScapeClient.luau` in `ReplicatedStorage`. Then use it from any Local
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local AudioScapeClient = require(ReplicatedStorage.AudioScapeClient)
 
-local client = AudioScapeClient.new()
-local result, err = client:search({ query = "chill beats", limit = 10 })
+local result, err = AudioScapeClient:search({ query = "chill beats", limit = 10 })
 ```
 
-**Available client methods:** `search`, `lookup`, `similar`, `browse`, `sfxSearch`, `sfxSimilar`, `sfxBrowse`, `getSfxTaxonomy`, `getStructure`, `getPlaylist`, `listPlaylists`
+**Available methods on `AudioScapeClient`:** `search`, `lookup`, `similar`, `browse`, `sfxSearch`, `sfxSimilar`, `sfxBrowse`, `getSfxTaxonomy`, `getStructure`, `getPlaylist`, `listPlaylists`, `getAssetService`
 
 > **Note:** `AudioScapeClient.luau` must be placed in `ReplicatedStorage` manually (or via the Studio plugin). The server SDK's Wally realm is `server`, so it installs to `ServerScriptService` — the client module is distributed separately.
 
@@ -469,14 +701,14 @@ local result, err = client:search({ query = "chill beats", limit = 10 })
 
 Analytics are collected automatically — events are buffered in memory and flushed every 30 seconds (configurable). On game close, remaining events are flushed via `game:BindToClose`. No player PII is stored; `playerId` is used only for unique player counts.
 
-> **Tip:** If you use `client:createPlayer()`, play/stop/skip events are tracked automatically. The manual tracking methods below are for custom integrations or events the player can't detect (votes, favorites, etc.).
+> **Tip:** If you use `AudioScape:createPlayer()`, play/stop/skip events are tracked automatically. The manual tracking methods below are for custom integrations or events the player can't detect (votes, favorites, etc.).
 
-### `client:configureAnalytics(config)`
+### `AudioScape:configureAnalytics(config)`
 
 Configure analytics batching behavior. Call before tracking events.
 
 ```lua
-client:configureAnalytics({
+AudioScape:configureAnalytics({
     enabled = true,       -- default: true
     batchInterval = 30,   -- seconds between flushes (min: 5)
     maxBatchSize = 50,    -- events per flush (1-500)
@@ -484,58 +716,58 @@ client:configureAnalytics({
 })
 ```
 
-### `client:trackPlay(assetId, playerId?, duration?)`
+### `AudioScape:trackPlay(assetId, playerId?, duration?)`
 
 Track a song play event.
 
 ```lua
-client:trackPlay("rbxassetid://123456789", player.UserId, 120)
+AudioScape:trackPlay("rbxassetid://123456789", player.UserId, 120)
 ```
 
-### `client:trackStop(assetId, playerId?, duration?)`
+### `AudioScape:trackStop(assetId, playerId?, duration?)`
 
 Track a song stop event (natural end or user action).
 
-### `client:trackSkip(assetId, playerId?, duration?)`
+### `AudioScape:trackSkip(assetId, playerId?, duration?)`
 
 Track a song skip event. Duration is how long the player listened before skipping.
 
-### `client:trackVote(assetId, value, playerId?)`
+### `AudioScape:trackVote(assetId, value, playerId?)`
 
 Track a vote. Value must be `"up"` or `"down"`.
 
 ```lua
-client:trackVote("rbxassetid://123456789", "up", player.UserId)
+AudioScape:trackVote("rbxassetid://123456789", "up", player.UserId)
 ```
 
-### `client:trackFavorite(assetId, playerId?)`
+### `AudioScape:trackFavorite(assetId, playerId?)`
 
 Track a favorite event.
 
-### `client:trackUnfavorite(assetId, playerId?)`
+### `AudioScape:trackUnfavorite(assetId, playerId?)`
 
 Track an unfavorite event.
 
-### `client:trackAddToQueue(assetId, playerId?)`
+### `AudioScape:trackAddToQueue(assetId, playerId?)`
 
 Track when a player adds a song to a queue, setlist, or playlist.
 
-### `client:trackSearchClick(assetId, playerId?, metadata?)`
+### `AudioScape:trackSearchClick(assetId, playerId?, metadata?)`
 
 Track when a player clicks a search result.
 
-### `client:trackCustom(eventType, assetId?, playerId?, metadata?)`
+### `AudioScape:trackCustom(eventType, assetId?, playerId?, metadata?)`
 
 Track a custom event with any type name.
 
 ```lua
-client:trackCustom("song_previewed", assetId, player.UserId, {
+AudioScape:trackCustom("song_previewed", assetId, player.UserId, {
     source = "browse_genre",
     position = 3,
 })
 ```
 
-### `client:flushAnalytics()`
+### `AudioScape:flushAnalytics()`
 
 Force flush all buffered events immediately. Called automatically on game close.
 
@@ -548,7 +780,7 @@ Roblox enforces a limit of **500 HTTP requests per minute** per game server. Kee
 All methods return `result, err`. On failure, `result` is `nil` and `err` is a descriptive string:
 
 ```lua
-local result, err = client:search({ query = "test" })
+local result, err = AudioScape:search({ query = "test" })
 if not result then
     warn("Search failed:", err)
     return
@@ -570,6 +802,7 @@ See the [`examples/`](examples/) folder for complete usage examples:
 - **StructureBeatSync.luau** — Schedule particle bursts on downbeats and punch the camera FOV on Drops
 - **TrendingLobbyJukebox.luau** — Drop-in lobby music from `browse({ type = "trending" })` piped through the music player
 - **TrendingSfxBoard.luau** — Lobby sound board built from `sfxBrowse({ type = "trending" })`
+- **AssetServiceDropIn.luau** — Point existing `AssetService:SearchAudioAsync` code at AudioScape by changing one line
 
 ## Links
 

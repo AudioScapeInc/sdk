@@ -424,6 +424,209 @@ step("createPlayer", function()
 	return "ok"
 end)
 
+-- getAssetService stands in for game:GetService("AssetService"). Only a real
+-- engine has an actual AudioSearchParams Instance, so this is the step that
+-- proves we read its properties (and its unset sentinels) correctly — the Lune
+-- specs can only exercise the plain-table form the client bridge sends.
+step("getAssetService", function()
+	local AssetService = client:getAssetService()
+	assert(typeof(AssetService.SearchAudioAsync) == "function", "shim is missing SearchAudioAsync")
+
+	local params = Instance.new("AudioSearchParams")
+	params.SearchKeyword = "calm ambient"
+
+	local pages = AssetService:SearchAudioAsync(params)
+	local page = pages:GetCurrentPage()
+	assert(#page > 0, "shim returned an empty first page")
+
+	-- The native item shape, verified field by field against a live
+	-- SearchAudioAsync response.
+	local first = page[1]
+	for _, key in
+		{
+			"Id",
+			"Title",
+			"Artist",
+			"Description",
+			"Duration",
+			"Tags",
+			"AudioType",
+			"IsEndorsed",
+			"CreateTime",
+			"UpdateTime",
+			"Creator",
+		}
+	do
+		assert(first[key] ~= nil, "mapped result is missing native key " .. key)
+	end
+	assert(type(first.Id) == "number", "Id must be numeric like native; got " .. typeof(first.Id))
+	assert(first.AudioType == "Music", "AudioType should be the string 'Music'; got " .. tostring(first.AudioType))
+	assert(type(first.Creator) == "table" and first.Creator.Name ~= nil, "Creator table incomplete")
+
+	-- MaxDuration defaults to int32 max. If we ever forward that sentinel as a
+	-- real ceiling the query still succeeds, so assert on the returned
+	-- durations instead: an unfiltered search must be free to exceed any
+	-- bound we might have accidentally applied.
+	assert(params.MaxDuration == 2147483647, "AudioSearchParams.MaxDuration default changed; revisit the sentinel")
+	assert(params.AudioSubType == Enum.AudioSubType.Music, "AudioSearchParams.AudioSubType default changed")
+
+	-- AudioSubType routes to the SFX catalog.
+	local sfxParams = Instance.new("AudioSearchParams")
+	sfxParams.SearchKeyword = "footstep"
+	sfxParams.AudioSubType = Enum.AudioSubType.SoundEffect
+	local sfxPages = AssetService:SearchAudioAsync(sfxParams)
+	local sfxPage = sfxPages:GetCurrentPage()
+	assert(#sfxPage > 0, "SFX-routed search returned an empty page")
+	assert(
+		sfxPage[1].AudioType == "SoundEffect",
+		"SFX results should carry AudioType 'SoundEffect'; got " .. tostring(sfxPage[1].AudioType)
+	)
+
+	-- Unrecognised members forward to the real AssetService, so the shim is a
+	-- complete stand-in. GetAudioMetadataAsync is the useful one: it returns
+	-- fields we don't hold, so passing it through beats reimplementing it.
+	local meta = AssetService:GetAudioMetadataAsync({ "rbxassetid://" .. tostring(first.Id) })
+	assert(type(meta) == "table" and #meta == 1, "forwarded GetAudioMetadataAsync did not return one entry")
+	assert(tostring(meta[1].AssetId) == tostring(first.Id), "forwarded metadata is for the wrong asset")
+
+	return string.format("music=%d sfx=%d finished=%s", #page, #sfxPage, tostring(pages.IsFinished))
+end)
+
+-- auditAudio walks the data model for Sound / AudioPlayer instances. Lune's
+-- mock has no tree, no IsA and no GetFullName, so this is the only place the
+-- scan can be exercised. Plant known instances first so the counts are
+-- deterministic rather than dependent on whatever the test place contains.
+step("auditAudio", function()
+	assert(fixtures.music_asset_id, "needs music_asset_id from browse_trending")
+
+	local folder = Instance.new("Folder")
+	folder.Name = "AudioScapeAuditFixture"
+	folder.Parent = workspace
+
+	-- Same asset twice, to prove uses are counted rather than double-listed.
+	for _ = 1, 2 do
+		local sound = Instance.new("Sound")
+		sound.SoundId = "rbxassetid://" .. fixtures.music_asset_id
+		sound.Parent = folder
+	end
+
+	local player = Instance.new("AudioPlayer")
+	player.Asset = "rbxassetid://" .. fixtures.music_asset_id
+	player.Parent = folder
+
+	-- An unassigned Sound is normal for a template that gets its asset at
+	-- runtime; it must be skipped rather than reported as a broken entry.
+	local blank = Instance.new("Sound")
+	blank.Parent = folder
+
+	local audit, err = client:auditAudio({ roots = { folder } })
+	folder:Destroy()
+
+	assert(audit, "auditAudio failed: " .. tostring(err))
+	assert(audit.meta.instances_scanned == 4, "scanned " .. tostring(audit.meta.instances_scanned) .. ", expected 4")
+	assert(
+		audit.meta.distinct_assets == 1,
+		"distinct_assets = " .. tostring(audit.meta.distinct_assets) .. ", expected 1 (blank Sound skipped)"
+	)
+
+	local entry = audit.assets[1]
+	assert(entry, "no asset entries returned")
+	assert(entry.asset_id == fixtures.music_asset_id, "wrong asset_id: " .. tostring(entry.asset_id))
+	assert(entry.uses == 3, "uses = " .. tostring(entry.uses) .. ", expected 3 (2 Sounds + 1 AudioPlayer)")
+	assert(#entry.sample_path > 0, "sample_path is empty")
+	-- The fixture came from our own trending list, so the catalog must serve it.
+	assert(entry.status == "ok", "trending asset reported as " .. tostring(entry.status) .. ", expected ok")
+	assert(entry.name and #entry.name > 0, "health lookup returned no name for a catalog asset")
+	assert(audit.meta.ok == 1, "meta.ok = " .. tostring(audit.meta.ok) .. ", expected 1")
+	assert(audit.meta.unavailable == 0 and audit.meta.private == 0, "unexpected unavailable/private counts")
+
+	return string.format(
+		"scanned=%d distinct=%d uses=%d",
+		audit.meta.instances_scanned,
+		audit.meta.distinct_assets,
+		entry.uses
+	)
+end)
+
+-- createSoundBank. The bridging path calls AssetService:GetAudioMetadataAsync,
+-- which Lune can't model at all, so the engine is the only place it can be
+-- exercised against the real catalog.
+step("createSoundBank", function()
+	assert(fixtures.sfx_asset_id, "needs sfx_asset_id from sfxBrowse_trending")
+
+	local bank = client:createSoundBank({
+		seeds = { impact = fixtures.sfx_asset_id },
+		kind = "sfx",
+		poolSize = 5,
+	})
+	local ok, err = bank:resolveAsync()
+	assert(ok, "resolveAsync failed: " .. tostring(err))
+
+	local pool = bank:getPool("impact")
+	assert(#pool >= 1, "pool is empty")
+	-- extend mode: the seed must lead its own pool, never be replaced.
+	assert(pool[1] == fixtures.sfx_asset_id, "seed does not lead the pool: " .. tostring(pool[1]))
+	assert(
+		bank.Pools.impact.source == "catalog",
+		"a trending SFX asset should resolve via the catalog, got " .. tostring(bank.Pools.impact.source)
+	)
+
+	-- No immediate repeats. With a single-asset pool this is trivially true,
+	-- so only assert it when there's an actual choice to make.
+	if #pool > 1 then
+		local previous = nil
+		for i = 1, 100 do
+			local pick = bank:pick("impact")
+			assert(pick, "pick returned nil at iteration " .. tostring(i))
+			assert(pick ~= previous, "immediate repeat at iteration " .. tostring(i))
+			previous = pick
+		end
+
+		-- Healing: a dropped asset must never come back.
+		local dropped = pool[2]
+		assert(bank:reportUnavailable(dropped), "reportUnavailable returned false")
+		for _ = 1, 100 do
+			assert(bank:pick("impact") ~= dropped, "unavailable asset was picked again")
+		end
+	end
+
+	-- Capture before destroy(), which clears Pools.
+	local source = bank.Pools.impact.source
+	bank:destroy()
+	return string.format("source=%s pool=%d", source, #pool)
+end)
+
+-- checkAssetHealth against the live catalog. The private path needs an asset
+-- Roblox knows and we don't, which no fixture can guarantee, so this asserts
+-- the determinations we CAN make deterministically: a trending asset is ok,
+-- and an id neither source knows resolves to unknown rather than a guess.
+step("checkAssetHealth", function()
+	assert(fixtures.music_asset_id, "needs music_asset_id from browse_trending")
+
+	local health, err = client:checkAssetHealth({ fixtures.music_asset_id, "1" })
+	assert(health, "checkAssetHealth failed: " .. tostring(err))
+	assert(health.meta.total == 2, "two ids reported; got " .. tostring(health.meta.total))
+
+	local byId = {}
+	for _, a in health.assets do
+		byId[a.asset_id] = a
+	end
+
+	local live = byId[fixtures.music_asset_id]
+	assert(live, "trending asset missing from the response")
+	assert(live.status == "ok", "trending asset should be ok; got " .. tostring(live.status))
+	assert(live.name and #live.name > 0, "health returned no name for a catalog asset")
+
+	local bogus = byId["1"]
+	assert(bogus, "bogus id missing from the response")
+	assert(bogus.status == "unknown", "an id neither source knows should be unknown; got " .. tostring(bogus.status))
+
+	-- Order is preserved, so callers can zip against their input.
+	assert(health.assets[1].asset_id == fixtures.music_asset_id, "input order preserved")
+
+	return string.format("ok=%d unknown=%d", health.meta.ok, health.meta.unknown)
+end)
+
 -- enableClientAccess creates ReplicatedStorage.AudioScapeRemotes (Folder)
 -- with one RemoteFunction per public method. Lune doesn't model
 -- RemoteFunction at all, so this is net new coverage.

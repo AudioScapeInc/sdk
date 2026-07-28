@@ -15,10 +15,10 @@ local AudioScape = require(ServerScriptService.Packages.AudioScape)
 
 local apiKey = if RunService:IsStudio() then "your-test-key" else HttpService:GetSecret("AudioScapeKey")
 
-local client = AudioScape.new(apiKey)
+AudioScape.setApiKey(apiKey)
 
 -- Step 1: List all genres
-local genres, err = client:browse({ type = "genre" })
+local genres, err = AudioScape:browse({ type = "genre" })
 if not genres then
 	warn("Failed to list genres:", err)
 	return
@@ -33,7 +33,7 @@ end
 local picked = genres.items[math.random(#genres.items)]
 print("\nBrowsing:", picked.display_name)
 
-local tracks, trackErr = client:browse({
+local tracks, trackErr = AudioScape:browse({
 	type = "genre",
 	name = picked.name,
 	limit = 10,

@@ -14,10 +14,10 @@ local AudioScape = require(ServerStorage.AudioScape)
 
 local apiKey = if RunService:IsStudio() then "your-test-key" else HttpService:GetSecret("AudioScapeKey")
 
-local client = AudioScape.new(apiKey)
+AudioScape.setApiKey(apiKey)
 
 -- Create a music player
-local player = client:createPlayer({
+local player = AudioScape:createPlayer({
 	volume = 0.5,
 })
 
@@ -35,7 +35,7 @@ player.OnQueueFinished = function()
 end
 
 -- Search and queue tracks
-local result, err = client:search({ query = "chill lo-fi beats", limit = 10 })
+local result, err = AudioScape:search({ query = "chill lo-fi beats", limit = 10 })
 if not result then
 	warn("Search failed:", err)
 	return

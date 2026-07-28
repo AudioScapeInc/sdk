@@ -15,9 +15,9 @@ local AudioScape = require(ServerScriptService.Packages.AudioScape)
 
 local apiKey = if RunService:IsStudio() then "your-test-key" else HttpService:GetSecret("AudioScapeKey")
 
-local client = AudioScape.new(apiKey)
+AudioScape.setApiKey(apiKey)
 
-local result, err = client:sfxSearch({
+local result, err = AudioScape:sfxSearch({
 	query = "metal sword impact short",
 	limit = 10,
 	filters = { duration = { min = 0, max = 1 } },

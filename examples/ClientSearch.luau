@@ -25,8 +25,8 @@ local apiKey = if RunService:IsStudio()
 	then "your-test-key"
 	else HttpService:GetSecret("AudioScapeKey")
 
-local client = AudioScape.new(apiKey)
-client:enableClientAccess()
+AudioScape.setApiKey(apiKey)
+AudioScape:enableClientAccess()
 ]]
 
 -- === CLIENT SCRIPT (LocalScript in ScreenGui) ===
@@ -35,7 +35,6 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 
 local AudioScapeClient = require(ReplicatedStorage:WaitForChild("AudioScapeClient"))
-local client = AudioScapeClient.new()
 
 local player = Players.LocalPlayer
 local gui = player.PlayerGui:WaitForChild("ScreenGui")
@@ -46,7 +45,7 @@ searchInput.FocusLost:Connect(function(enterPressed)
 		return
 	end
 
-	local result, err = client:search({ query = searchInput.Text, limit = 10 })
+	local result, err = AudioScapeClient:search({ query = searchInput.Text, limit = 10 })
 	if not result then
 		warn("Search failed:", err)
 		return

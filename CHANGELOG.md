@@ -1,5 +1,51 @@
 # Changelog
 
+## v0.17.0
+
+### Changed
+
+- **`AudioScape.setApiKey(key)` is now the documented entry point — call methods on the module directly.** Previously the docs created an object and called it `client`, which collides with what "client" means in Roblox: the player's machine. The collision was on both axes at once — the same variable name was used for the server-side object and the LocalScript-side object in adjacent examples, and the server object's internal type was named `AudioScapeClient` while `AudioScapeClient.luau` is the LocalScript module. Now there's no object to name:
+
+  ```lua
+  local AudioScape = require(ServerScriptService.Packages.AudioScape)
+  AudioScape.setApiKey(HttpService:GetSecret("AudioScapeKey"))
+
+  local result = AudioScape:search({ query = "chill lo-fi" })
+  local player = AudioScape:createPlayer()
+  ```
+
+  `setApiKey` takes a plain string or `Secret` userdata, exactly like `new` did, and tolerates both `AudioScape.setApiKey(key)` and `AudioScape:setApiKey(key)`. Calling it again swaps the key without dropping queued analytics or starting a second flush loop.
+- **`AudioScapeClient` works the same way** — call methods on the module from a LocalScript; the RemoteFunctions resolve on first use.
+- **Nothing is removed.** `AudioScape.new(key)` and `AudioScapeClient.new()` still work and are still the right call when one server needs more than one API key, or when you want the client's remotes resolved eagerly so a missing `enableClientAccess()` fails at startup rather than at first search. Existing integrations are unaffected.
+- The README's "Client Access" section is now "Calling from LocalScripts", and "client" throughout the docs now only ever means the Roblox client.
+
+### Added
+
+- **`AudioScape:createSoundBank(options)` — expand one asset ID into a pool of related ones.** Solves the "machine gun" effect where a repeated footstep or impact plays the identical clip every time. Seed it with the asset you already use; `bank:pick(name)` returns an asset from its neighbourhood and never the same one twice in a row.
+  - **Your asset is never silently swapped.** The default `mode = "extend"` keeps your seed at the head of its own pool and adds neighbours around it. `mode = "replace"` builds from neighbours only and has to be asked for explicitly.
+  - **Seeds we don't have still work.** If a seed isn't in the catalog, the bank reads `AssetService:GetAudioMetadataAsync` — which returns title and artist for any Roblox audio ID — and searches on that to find an anchor. `bank.Pools[name].source` reports `catalog`, `bridged`, or `none`. `none` degrades to just your seed, so you're never worse off than before.
+  - **Resolve once at startup**, then every `pick` is a local table lookup. Roblox caps a server at 500 HTTP requests/minute; resolving per-play would exhaust that almost immediately. Seed classification batches 100 per request and metadata bridging batches 30, matching the respective API limits.
+  - `bank:reportUnavailable(assetId)` drops an asset that failed to load from future picks. Detection is inherently client-side — a headless server never fetches audio, so `GetAssetFetchStatus` stays `None` there. If a whole pool becomes unavailable, `pick` falls back to your seed rather than returning `nil`.
+  - Picks aggregate: `flushPickCounts()` emits one `audio_pick` event per distinct asset with a `count`, rather than one event per pick, which would overrun the 500-event analytics buffer during any footstep loop. `resolveAsync()` emits `audio_resolve` per seed; `reportUnavailable` emits `audio_unavailable`.
+  - Built on the existing `similar` / `sfxSimilar` endpoints with `dedupe` — near-identical uploads are the opposite of variation.
+- **`AudioScape:checkAssetHealth(assetIds, options?)`** — reports whether specific assets are still playable, and whether AudioScape can offer similarity for them. Statuses: `ok`, `moderated`, `deleted`, `delisted`, `private`, `unknown`. Up to 100 IDs per call, batched internally.
+  - **Two sources are combined**, because neither is sufficient alone. `/v1/assets/health` knows moderation state; only the Roblox engine knows whether an asset your experience can play exists at all. An asset the engine describes (via `AssetService:GetAudioMetadataAsync`) but our catalog doesn't hold is **private to your experience** — reported as `private` rather than lumped in with genuinely missing assets.
+  - **`options.reportPrivate`** (default `false`) reports detected private assets back to AudioScape, so they surface in the console under Advisor → Private audio in use, where the file can be uploaded directly and analysed. Served back only to that API key. Off by default because the result is a list of your private catalog and inferring consent from a diagnostic call isn't right; the determination is returned either way, and a failed report never fails the health check.
+  - **Private audio keeps working.** Sound banks never remove your seed, so your own private assets play exactly as before; we only add public neighbours around them. `mode = "replace"` now also keeps the seed unless we resolved it from our own catalog — a bridged or unresolved seed may be audio private to your experience, and a replacement might not be something your game has permission to play. What we can't do is offer similarity *for* a private asset, since we hold no copy; sharing access with AudioScape is what unlocks that, and it's then served back only to your API key.
+- **`AudioScape:auditAudio(options?)`** — walks the place for every `Sound` and `AudioPlayer`, collects the distinct asset IDs, and reports which ones AudioScape's catalog knows about. Returns per-asset `uses` and `sample_path` (the first instance's `GetFullName()`), ordered most-used first, plus `meta` counts. Sounds with an empty `SoundId` are counted as scanned but skipped, since an unassigned template is normal. Pass `roots` to narrow the scan on a large place. Read-only; intended as a startup or development diagnostic rather than something to poll.
+- **`AudioScape.setEndpoints({ baseUrl, analyticsUrl })`** — points the SDK at a different API host for local development or staging. Previously both URLs were hardcoded with no override. Omitted fields keep their current value, trailing slashes are trimmed, and it's safe to call before or after `setApiKey`. Studio can reach `http://localhost`; a published Roblox server cannot, so this is a development affordance rather than a deployment mechanism.
+- **`AudioScape:getAssetService()` — a drop-in stand-in for `game:GetService("AssetService")`.** Existing `AssetService:SearchAudioAsync(params)` call sites work unchanged: same `AudioSearchParams` in, same `AudioPages` out (`GetCurrentPage`, `AdvanceToNextPageAsync`, `IsFinished`), same raise-on-failure behaviour. Search runs against AudioScape's catalog, so results are matched on meaning rather than keywords. `AudioSubType` routes the call — `Music` searches music, `SoundEffect` searches SFX. The deprecated `SearchAudio` alias is supported too.
+  - **Every member we don't override forwards to the real `AssetService`**, so `GetAudioMetadataAsync`, `CreateEditableImage`, `GetBundleDetailsAsync` and the rest behave exactly as before. The shim is a complete stand-in, not a two-method object.
+  - `AudioSearchParams` mapping: `SearchKeyword`/`Title`/`Artist`/`Album` combine into the semantic query; `Tag` becomes a genre filter (music) or category filter (SFX), and doubles as the query when nothing else is set; `MinDuration`/`MaxDuration` become a duration filter.
+  - Results carry every native field plus `AssetId` (string form), `Score`, `Genre`, `GenreSlug`, and `Bpm`. `IsEndorsed` is always `false` — it's Roblox's own endorsement flag, which AudioScape doesn't track; the field is present so code reading it keeps working.
+  - `options.fallback` (default `true`) falls through to the real `AssetService:SearchAudioAsync` when an AudioScape request fails, so swapping the service in can't leave a caller worse off than native. `options.limit` (default `30`) matches native's page size.
+  - Mirrored on `AudioScapeClient` (LocalScript-side) as `client:getAssetService()`, over a new `SearchAudio` RemoteFunction. `HttpService` is server-only, so the request and the result mapping both happen server-side.
+
+### Notes
+
+- `AudioSearchParams` signals "unset" with sentinel values rather than `nil`: strings default to `""`, `MinDuration` to `0`, `MaxDuration` to `2147483647` (int32 max), and `AudioSubType` to `Music`. Verified against a live engine; the mapping treats each sentinel as absent so no phantom filters reach the API.
+- Native `SearchAudioAsync` returns 30 results per page. That isn't documented anywhere, so it's asserted in the Open Cloud smoke to catch a change.
+
 ## v0.16.0
 
 ### Added

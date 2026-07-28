@@ -17,9 +17,9 @@ local AudioScape = require(ServerScriptService.Packages.AudioScape)
 
 local apiKey = if RunService:IsStudio() then "your-test-key" else HttpService:GetSecret("AudioScapeKey")
 
-local client = AudioScape.new(apiKey)
+AudioScape.setApiKey(apiKey)
 
-local result, err = client:sfxBrowse({ type = "trending", limit = 25 })
+local result, err = AudioScape:sfxBrowse({ type = "trending", limit = 25 })
 if not result then
 	warn("Trending SFX fetch failed:", err)
 	return

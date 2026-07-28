@@ -7,7 +7,7 @@
 	a UI label. New players hear what's hot today; existing players see the
 	queue cycle as the day's list refreshes.
 
-	Pair with `client:trackVote(asset_id, "up")` from a thumbs-up button to
+	Pair with `AudioScape:trackVote(asset_id, "up")` from a thumbs-up button to
 	feed engagement back into tomorrow's trending list.
 ]]
 
@@ -20,8 +20,8 @@ local AudioScape = require(ServerScriptService.Packages.AudioScape)
 
 local apiKey = if RunService:IsStudio() then "your-test-key" else HttpService:GetSecret("AudioScapeKey")
 
-local client = AudioScape.new(apiKey)
-local musicPlayer = client:createPlayer({ volume = 0.5 })
+AudioScape.setApiKey(apiKey)
+local musicPlayer = AudioScape:createPlayer({ volume = 0.5 })
 
 -- Optional: a StringValue your UI watches for the now-playing label
 local nowPlaying = ReplicatedStorage:FindFirstChild("NowPlaying") or Instance.new("StringValue")
@@ -34,7 +34,7 @@ end
 
 -- `region = "auto"` ranks by activity near this server's location; omit it
 -- (or leave regional trending disabled for your key) to get the global list.
-local result, err = client:browse({ type = "trending", region = "auto", limit = 50 })
+local result, err = AudioScape:browse({ type = "trending", region = "auto", limit = 50 })
 if not result then
 	warn("Trending fetch failed:", err)
 	return
