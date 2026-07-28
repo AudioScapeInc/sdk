@@ -261,9 +261,18 @@ function AudioScapeSoundBank.resolveAsync(self: any): (boolean, string?)
 
 		local assets: { string } = {}
 		local seen: { [string]: boolean } = {}
-		-- In extend mode the developer's own asset always leads the pool. We
-		-- add to their choice rather than overriding it.
-		if self._mode == "extend" then
+
+		-- The developer's own asset leads the pool: we add to their choice
+		-- rather than overriding it.
+		--
+		-- Replace mode drops the seed only when we resolved it from our own
+		-- catalog. A bridged or unresolved seed may be audio that's private to
+		-- this experience — we can't confirm a substitute is equivalent, and
+		-- the developer's game has permission for their asset where a
+		-- replacement might not. Silently swapping it out is the one outcome
+		-- worse than not helping.
+		local keepSeed = self._mode == "extend" or source ~= "catalog"
+		if keepSeed then
 			assets[1] = seedId
 			seen[seedId] = true
 		end

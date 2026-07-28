@@ -1741,15 +1741,44 @@ export type AudioAuditOptions = {
 	playerId: number?,
 }
 
+-- GetAudioMetadataAsync accepts at most 30 ids per call.
+local METADATA_BATCH_SIZE = 30
+
+export type AssetHealth = {
+	asset_id: string,
+	-- "ok"        — servable, and we can offer similarity for it
+	-- "moderated" — taken down by Roblox moderation
+	-- "deleted"   — deleted
+	-- "delisted"  — removed from public listing
+	-- "private"   — a real asset your experience can play, but private to you,
+	--               so we hold no copy and can't offer similarity. Sharing
+	--               access with AudioScape is what unlocks that.
+	-- "unknown"   — neither our catalog nor Roblox returns anything for it
+	status: string,
+	audio_type: string?,
+	name: string?,
+}
+
+export type AssetHealthResult = {
+	assets: { AssetHealth },
+	meta: {
+		total: number,
+		ok: number,
+		unavailable: number,
+		private: number,
+		unknown: number,
+	},
+}
+
 export type AudioAssetUsage = {
 	asset_id: string,
 	-- How many Sound / AudioPlayer instances reference this asset.
 	uses: number,
 	-- Full name of the first instance found, so you can jump straight to it.
 	sample_path: string,
-	-- Whether AudioScape's catalog has this asset. `false` means we can't
-	-- offer variations or similarity for it — it may still play fine.
-	known: boolean,
+	status: string,
+	audio_type: string?,
+	name: string?,
 }
 
 export type AudioAuditResult = {
@@ -1757,10 +1786,140 @@ export type AudioAuditResult = {
 	meta: {
 		instances_scanned: number,
 		distinct_assets: number,
-		known: number,
+		ok: number,
+		unavailable: number,
+		private: number,
 		unknown: number,
 	},
 }
+
+-- Check whether specific assets are still playable, and whether we can offer
+-- similarity for them.
+--
+--   local health = AudioScape:checkAssetHealth({ "1837879082", "9046863579" })
+--
+-- Two sources are combined, because neither alone is sufficient. AudioScape's
+-- catalog knows moderation state; only the Roblox engine knows whether an
+-- asset your experience can play exists at all. An asset the engine describes
+-- but our catalog doesn't hold is private to you — that's the case worth
+-- acting on, since sharing access with AudioScape is what unlocks similarity
+-- and variation for it.
+function AudioScape.checkAssetHealth(
+	self: AudioScapeInstance,
+	assetIds: { string },
+	playerId: number?
+): (AssetHealthResult?, string?)
+	if type(assetIds) ~= "table" or #assetIds == 0 then
+		return nil, "checkAssetHealth requires a non-empty array of asset ids"
+	end
+
+	local order: { string } = {}
+	local seen: { [string]: boolean } = {}
+	for _, raw in assetIds do
+		local id = resolveAssetId(raw)
+		if id and not seen[id] then
+			seen[id] = true
+			table.insert(order, id)
+		end
+	end
+	if #order == 0 then
+		return nil, "checkAssetHealth found no usable asset ids in the input"
+	end
+
+	local byId: { [string]: AssetHealth } = {}
+	for start = 1, #order, LOOKUP_BATCH_SIZE do
+		local batch: { string } = {}
+		for i = start, math.min(start + LOOKUP_BATCH_SIZE - 1, #order) do
+			table.insert(batch, order[i])
+		end
+
+		local result, err = request(self, "/v1/assets/health", { asset_ids = batch }, playerId)
+		if not result then
+			return nil, err
+		end
+		for _, entry in (result.assets or {}) do
+			byId[tostring(entry.asset_id)] = {
+				asset_id = tostring(entry.asset_id),
+				status = tostring(entry.status),
+				audio_type = entry.audio_type,
+				name = entry.name,
+			}
+		end
+	end
+
+	-- Only ids our catalog doesn't hold need the engine. Asking about
+	-- everything would burn the 30-per-call budget for no new information.
+	local unresolved: { string } = {}
+	for _, id in order do
+		local entry = byId[id]
+		if entry and entry.status == "not_in_catalog" then
+			table.insert(unresolved, id)
+		end
+	end
+
+	for start = 1, #unresolved, METADATA_BATCH_SIZE do
+		local batch: { string } = {}
+		for i = start, math.min(start + METADATA_BATCH_SIZE - 1, #unresolved) do
+			table.insert(batch, "rbxassetid://" .. unresolved[i])
+		end
+
+		-- Resolved lazily and guarded: AssetService isn't reachable from every
+		-- context, and a metadata failure must degrade to "unknown" rather
+		-- than fail an audit that otherwise succeeded.
+		local ok, metadata = pcall(function()
+			return game:GetService("AssetService"):GetAudioMetadataAsync(batch)
+		end)
+		if ok then
+			for _, meta in metadata :: { any } do
+				local id = tostring(meta.AssetId)
+				local entry = byId[id]
+				-- A response carrying only AssetId means Roblox has no
+				-- metadata either, so the asset is genuinely unreachable.
+				-- Anything richer means it exists and your experience can see
+				-- it — we simply don't hold a copy.
+				if entry and type(meta.Title) == "string" and #meta.Title > 0 then
+					entry.status = "private"
+					entry.name = meta.Title
+				end
+			end
+		end
+	end
+
+	local assets: { AssetHealth } = {}
+	local counts = { ok = 0, unavailable = 0, private = 0, unknown = 0 }
+	for _, id in order do
+		local fallback: AssetHealth = { asset_id = id, status = "unknown", audio_type = nil, name = nil }
+		local entry: AssetHealth = byId[id] or fallback
+		-- Anything the engine couldn't describe stays unknown rather than
+		-- claiming a specific failure we can't evidence.
+		if entry.status == "not_in_catalog" then
+			entry.status = "unknown"
+		end
+		table.insert(assets, entry)
+
+		if entry.status == "ok" then
+			counts.ok += 1
+		elseif entry.status == "private" then
+			counts.private += 1
+		elseif entry.status == "unknown" then
+			counts.unknown += 1
+		else
+			counts.unavailable += 1
+		end
+	end
+
+	return {
+		assets = assets,
+		meta = {
+			total = #assets,
+			ok = counts.ok,
+			unavailable = counts.unavailable,
+			private = counts.private,
+			unknown = counts.unknown,
+		},
+	},
+		nil
+end
 
 -- Inventory every audio asset referenced in the place, and check which ones
 -- AudioScape's catalog knows about.
@@ -1820,33 +1979,40 @@ function AudioScape.auditAudio(self: AudioScapeInstance, options: AudioAuditOpti
 					asset_id = assetId,
 					uses = 1,
 					sample_path = instance:GetFullName(),
-					known = false,
+					-- Overwritten by the health pass below; "unknown" is the
+					-- honest default if that pass can't reach an id.
+					status = "unknown",
+					audio_type = nil,
+					name = nil,
 				}
 				table.insert(order, assetId)
 			end
 		end
 	end
 
-	-- Resolve in batches. A partial failure fails the whole audit rather than
-	-- silently reporting assets as unknown when we simply couldn't ask.
-	local knownCount = 0
-	for start = 1, #order, LOOKUP_BATCH_SIZE do
-		local batch: { string } = {}
-		for i = start, math.min(start + LOOKUP_BATCH_SIZE - 1, #order) do
-			table.insert(batch, order[i])
-		end
+	-- A partial failure fails the whole audit rather than silently reporting
+	-- assets as unknown when we simply couldn't ask.
+	local health, healthErr = AudioScape.checkAssetHealth(self, order, opts.playerId)
+	if not health then
+		return nil, healthErr
+	end
 
-		local result, err = AudioScape.lookup(self, { asset_ids = batch, playerId = opts.playerId })
-		if not result then
-			return nil, err
+	local counts = { ok = 0, unavailable = 0, private = 0, unknown = 0 }
+	for _, entry in health.assets do
+		local usageEntry = usage[entry.asset_id]
+		if usageEntry then
+			usageEntry.status = entry.status
+			usageEntry.audio_type = entry.audio_type
+			usageEntry.name = entry.name
 		end
-		local tracks: { Track } = result.tracks or {}
-		for _, track in tracks do
-			local entry = usage[tostring(track.asset_id)]
-			if entry and not entry.known then
-				entry.known = true
-				knownCount += 1
-			end
+		if entry.status == "ok" then
+			counts.ok += 1
+		elseif entry.status == "private" then
+			counts.private += 1
+		elseif entry.status == "unknown" then
+			counts.unknown += 1
+		else
+			counts.unavailable += 1
 		end
 	end
 
@@ -1867,8 +2033,10 @@ function AudioScape.auditAudio(self: AudioScapeInstance, options: AudioAuditOpti
 		meta = {
 			instances_scanned = scanned,
 			distinct_assets = #order,
-			known = knownCount,
-			unknown = #order - knownCount,
+			ok = counts.ok,
+			unavailable = counts.unavailable,
+			private = counts.private,
+			unknown = counts.unknown,
 		},
 	},
 		nil

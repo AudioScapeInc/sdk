@@ -523,11 +523,45 @@ Results are ordered most-used first. Each entry gives:
 | `asset_id` | The asset ID as a string |
 | `uses` | How many instances reference it |
 | `sample_path` | `GetFullName()` of the first instance found, so you can jump to it |
-| `known` | Whether AudioScape's catalog has this asset |
+| `status` | See the status table under `checkAssetHealth` below |
+| `audio_type` | `"music"`, `"sfx"`, or `nil` |
+| `name` | Track name, when known |
 
-`meta` carries `instances_scanned`, `distinct_assets`, `known`, and `unknown`.
+`meta` carries `instances_scanned`, `distinct_assets`, `ok`, `unavailable`, `private`, and `unknown`.
 
-`known = false` means we can't offer similarity or variations for that asset — it says nothing about whether the asset still plays. Sounds with an empty `SoundId` are counted in `instances_scanned` but skipped otherwise, since an unassigned template is normal.
+Sounds with an empty `SoundId` are counted in `instances_scanned` but skipped otherwise, since an unassigned template is normal.
+
+### `AudioScape:checkAssetHealth(assetIds, playerId?)`
+
+Check whether specific assets are still playable, and whether AudioScape can offer similarity for them.
+
+```lua
+local health = AudioScape:checkAssetHealth({ "1837879082", "9046863579" })
+for _, asset in health.assets do
+    print(asset.asset_id, asset.status, asset.name)
+end
+```
+
+| `status` | Meaning |
+| --- | --- |
+| `ok` | Servable, and we can offer similarity and variation for it |
+| `moderated` | Taken down by Roblox moderation |
+| `deleted` | Deleted |
+| `delisted` | Removed from public listing |
+| `private` | A real asset your experience can play, but private to you — so we hold no copy and can't offer similarity |
+| `unknown` | Neither our catalog nor Roblox returns anything for it |
+
+`meta` carries `total`, `ok`, `unavailable`, `private`, and `unknown`. Accepts up to 100 IDs per call and batches internally.
+
+**Two sources are combined**, because neither is sufficient alone. AudioScape's catalog knows moderation state; only the Roblox engine knows whether an asset your experience can play exists at all. An asset the engine can describe but our catalog doesn't hold is **private to you**.
+
+#### Private audio
+
+Private audio keeps working. Sound banks never remove your seed, so your own assets play exactly as before — we only add public neighbours around them. In `mode = "replace"` we still keep your seed unless we resolved it from our own catalog, because a replacement might not be something your experience has permission to play.
+
+What we can't do is offer similarity or variation *for* a private asset, since we hold no copy. If you want that, you can share access with AudioScape from the Creator Dashboard (asset → Permissions → Experiences). Once ingested, it's served back only to your API key and stays invisible to every other tenant.
+
+> **Note:** Roblox asset grants are close to one-way — per Roblox's docs, once a game is granted permission to use a restricted asset that permission cannot be revoked. Worth knowing before you share.
 
 This walks the data model, so treat it as a startup or development diagnostic rather than something to poll. On a large place, pass a narrower `roots` list.
 

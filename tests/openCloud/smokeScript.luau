@@ -534,9 +534,11 @@ step("auditAudio", function()
 	assert(entry.asset_id == fixtures.music_asset_id, "wrong asset_id: " .. tostring(entry.asset_id))
 	assert(entry.uses == 3, "uses = " .. tostring(entry.uses) .. ", expected 3 (2 Sounds + 1 AudioPlayer)")
 	assert(#entry.sample_path > 0, "sample_path is empty")
-	-- The fixture came from our own trending list, so the catalog must know it.
-	assert(entry.known, "trending asset reported as unknown to the catalog")
-	assert(audit.meta.known == 1 and audit.meta.unknown == 0, "known/unknown counts wrong")
+	-- The fixture came from our own trending list, so the catalog must serve it.
+	assert(entry.status == "ok", "trending asset reported as " .. tostring(entry.status) .. ", expected ok")
+	assert(entry.name and #entry.name > 0, "health lookup returned no name for a catalog asset")
+	assert(audit.meta.ok == 1, "meta.ok = " .. tostring(audit.meta.ok) .. ", expected 1")
+	assert(audit.meta.unavailable == 0 and audit.meta.private == 0, "unexpected unavailable/private counts")
 
 	return string.format(
 		"scanned=%d distinct=%d uses=%d",
