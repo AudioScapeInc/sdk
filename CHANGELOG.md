@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.18.0
+
+### Added
+
+- **`AudioScape:createSoundBank({ playlist_id = "..." })` builds a bank from a sound bank curated in the portal.** Each slot becomes a pool, so the sounds a game plays can change without shipping code:
+
+  ```lua
+  local bank = AudioScape:createSoundBank({ playlist_id = "sfx-1785256484251" })
+  bank:resolveAsync()
+
+  sound.SoundId = "rbxassetid://" .. bank:pick("footstep")
+  ```
+
+  Slots are used **exactly as curated** — no similarity expansion. Whoever built the bank already decided what belongs in each slot, and quietly adding sounds they never listened to is the same mistake as swapping a game's gunshot unasked. Widening a slot is a decision made in the portal, where it can be heard first. `bank.Pools[name].source` reads `"playlist"` on this path.
+
+  Everything else is unchanged: `pick` still avoids immediate repeats, and `reportUnavailable` still drops a sound that fails to load.
+
+- **`getPlaylist` understands playlists that carry sound effects.** `playlist.kind` is `"music"`, `"sfx"`, or `"mixed"`; `playlist.slots` gives the grouped view; and sounds arrive in a `sounds` list beside `tracks`, kept separate so neither needs a type test before use. Sounds carry the same shape as `sfxSearch` results, including `sound_start_sec` / `sound_end_sec` — trimming to `sound_start_sec` removes the leading silence that makes an impact feel late.
+
+- `seeds` is now optional on `createSoundBank`. Pass `seeds` or `playlist_id`, not both.
+
 ## v0.17.0
 
 ### Changed
