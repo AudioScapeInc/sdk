@@ -596,6 +596,37 @@ step("createSoundBank", function()
 	return string.format("source=%s pool=%d", source, #pool)
 end)
 
+-- checkAssetHealth against the live catalog. The private path needs an asset
+-- Roblox knows and we don't, which no fixture can guarantee, so this asserts
+-- the determinations we CAN make deterministically: a trending asset is ok,
+-- and an id neither source knows resolves to unknown rather than a guess.
+step("checkAssetHealth", function()
+	assert(fixtures.music_asset_id, "needs music_asset_id from browse_trending")
+
+	local health, err = client:checkAssetHealth({ fixtures.music_asset_id, "1" })
+	assert(health, "checkAssetHealth failed: " .. tostring(err))
+	assert(health.meta.total == 2, "two ids reported; got " .. tostring(health.meta.total))
+
+	local byId = {}
+	for _, a in health.assets do
+		byId[a.asset_id] = a
+	end
+
+	local live = byId[fixtures.music_asset_id]
+	assert(live, "trending asset missing from the response")
+	assert(live.status == "ok", "trending asset should be ok; got " .. tostring(live.status))
+	assert(live.name and #live.name > 0, "health returned no name for a catalog asset")
+
+	local bogus = byId["1"]
+	assert(bogus, "bogus id missing from the response")
+	assert(bogus.status == "unknown", "an id neither source knows should be unknown; got " .. tostring(bogus.status))
+
+	-- Order is preserved, so callers can zip against their input.
+	assert(health.assets[1].asset_id == fixtures.music_asset_id, "input order preserved")
+
+	return string.format("ok=%d unknown=%d", health.meta.ok, health.meta.unknown)
+end)
+
 -- enableClientAccess creates ReplicatedStorage.AudioScapeRemotes (Folder)
 -- with one RemoteFunction per public method. Lune doesn't model
 -- RemoteFunction at all, so this is net new coverage.

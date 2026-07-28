@@ -226,7 +226,64 @@ do
 	assert(tostring(e3):find("usable", 1, true), "error explains why; got: " .. tostring(e3))
 end
 
--- 9. A failed health request fails the call rather than reporting everything
+-- 9. reportPrivate is off by default. The result is a list of the developer's
+--    private catalog; inferring consent from a diagnostic call isn't right.
+do
+	local engine = fakeAssetService({ ["9"] = "Private" })
+	local AudioScape, http = newSdk(engine)
+	http:queueResponse(healthResponse({ { asset_id = "9", status = "not_in_catalog" } }))
+
+	local result = AudioScape:checkAssetHealth({ "9" })
+	assert(result.meta.private == 1, "still detected and returned to the caller")
+	assert(#http.requests == 1, "no report sent without opting in; got " .. tostring(#http.requests))
+end
+
+-- 10. Opting in reports the private assets, with the engine's duration
+do
+	local engine = fakeAssetService({ ["9"] = "Private Track" })
+	local AudioScape, http = newSdk(engine)
+	http:queueResponse(healthResponse({
+		{ asset_id = "1", status = "ok" },
+		{ asset_id = "9", status = "not_in_catalog" },
+	}))
+	http:queueResponse({ Success = true, StatusCode = 200, Body = '{"accepted":1}' })
+
+	AudioScape:checkAssetHealth({ "1", "9" }, { reportPrivate = true })
+	assert(#http.requests == 2, "a report was sent; got " .. tostring(#http.requests))
+
+	local recorded = http.requests[2]
+	assert(recorded.url:find("/v1/assets/private-report", 1, true), "hit the report endpoint")
+
+	local decoded: any = serde.decode("json", recorded.body)
+	assert(#decoded.assets == 1, "only private assets are reported; got " .. tostring(#decoded.assets))
+	assert(decoded.assets[1].asset_id == "9", "the private id")
+	assert(decoded.assets[1].title == "Private Track", "the engine's title")
+	assert(decoded.assets[1].duration == 100, "the engine's duration, not the uploader's")
+end
+
+-- 11. Nothing private → nothing reported, even when opted in
+do
+	local AudioScape, http = newSdk()
+	http:queueResponse(healthResponse({ { asset_id = "1", status = "ok" } }))
+
+	AudioScape:checkAssetHealth({ "1" }, { reportPrivate = true })
+	assert(#http.requests == 1, "no empty report sent; got " .. tostring(#http.requests))
+end
+
+-- 12. A failed report must not fail a health check the caller already has an
+--     answer for.
+do
+	local engine = fakeAssetService({ ["9"] = "Private" })
+	local AudioScape, http = newSdk(engine)
+	http:queueResponse(healthResponse({ { asset_id = "9", status = "not_in_catalog" } }))
+	http:queueResponse({ Success = false, StatusCode = 500, Body = "" })
+
+	local result, err = AudioScape:checkAssetHealth({ "9" }, { reportPrivate = true })
+	assert(result and not err, "health result still returned; err: " .. tostring(err))
+	assert(result.assets[1].status == "private", "and the determination is intact")
+end
+
+-- 13. A failed health request fails the call rather than reporting everything
 --    as unknown, which would look like a definitive answer.
 do
 	local AudioScape, http = newSdk()

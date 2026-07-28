@@ -1739,6 +1739,8 @@ export type AudioAuditOptions = {
 	-- list on a large place — GetDescendants on a big Workspace is not free.
 	roots: { Instance }?,
 	playerId: number?,
+	-- Forwarded to checkAssetHealth. See AssetHealthOptions.
+	reportPrivate: boolean?,
 }
 
 -- GetAudioMetadataAsync accepts at most 30 ids per call.
@@ -1757,6 +1759,10 @@ export type AssetHealth = {
 	status: string,
 	audio_type: string?,
 	name: string?,
+	-- Only set for `private`: the engine's own duration for the asset. It's the
+	-- expected value a creator upload is validated against, and it comes from
+	-- Roblox rather than from whoever uploads the file.
+	duration: number?,
 }
 
 export type AssetHealthResult = {
@@ -1804,11 +1810,23 @@ export type AudioAuditResult = {
 -- but our catalog doesn't hold is private to you — that's the case worth
 -- acting on, since sharing access with AudioScape is what unlocks similarity
 -- and variation for it.
+export type AssetHealthOptions = {
+	playerId: number?,
+	-- Report any assets found to be private back to AudioScape, so they can be
+	-- surfaced in the console with an option to share them. Off by default: the
+	-- result is a list of your private catalog, and inferring consent from a
+	-- diagnostic call isn't right. The determination is returned to you either
+	-- way.
+	reportPrivate: boolean?,
+}
+
 function AudioScape.checkAssetHealth(
 	self: AudioScapeInstance,
 	assetIds: { string },
-	playerId: number?
+	options: AssetHealthOptions?
 ): (AssetHealthResult?, string?)
+	local opts: AssetHealthOptions = options or {}
+	local playerId = opts.playerId
 	if type(assetIds) ~= "table" or #assetIds == 0 then
 		return nil, "checkAssetHealth requires a non-empty array of asset ids"
 	end
@@ -1843,6 +1861,7 @@ function AudioScape.checkAssetHealth(
 				status = tostring(entry.status),
 				audio_type = entry.audio_type,
 				name = entry.name,
+				duration = nil,
 			}
 		end
 	end
@@ -1880,6 +1899,7 @@ function AudioScape.checkAssetHealth(
 				if entry and type(meta.Title) == "string" and #meta.Title > 0 then
 					entry.status = "private"
 					entry.name = meta.Title
+					entry.duration = tonumber(meta.Duration)
 				end
 			end
 		end
@@ -1888,7 +1908,7 @@ function AudioScape.checkAssetHealth(
 	local assets: { AssetHealth } = {}
 	local counts = { ok = 0, unavailable = 0, private = 0, unknown = 0 }
 	for _, id in order do
-		local fallback: AssetHealth = { asset_id = id, status = "unknown", audio_type = nil, name = nil }
+		local fallback: AssetHealth = { asset_id = id, status = "unknown", audio_type = nil, name = nil, duration = nil }
 		local entry: AssetHealth = byId[id] or fallback
 		-- Anything the engine couldn't describe stays unknown rather than
 		-- claiming a specific failure we can't evidence.
@@ -1905,6 +1925,24 @@ function AudioScape.checkAssetHealth(
 			counts.unknown += 1
 		else
 			counts.unavailable += 1
+		end
+	end
+
+	-- Opt-in, and best-effort: a failed report must not fail a health check the
+	-- caller already has an answer for.
+	if opts.reportPrivate and counts.private > 0 then
+		local payload: { { [string]: any } } = {}
+		for _, entry in assets do
+			if entry.status == "private" then
+				table.insert(payload, {
+					asset_id = entry.asset_id,
+					title = entry.name,
+					duration = entry.duration,
+				})
+			end
+		end
+		if #payload > 0 then
+			request(self, "/v1/assets/private-report", { assets = payload }, playerId)
 		end
 	end
 
@@ -1992,7 +2030,10 @@ function AudioScape.auditAudio(self: AudioScapeInstance, options: AudioAuditOpti
 
 	-- A partial failure fails the whole audit rather than silently reporting
 	-- assets as unknown when we simply couldn't ask.
-	local health, healthErr = AudioScape.checkAssetHealth(self, order, opts.playerId)
+	local health, healthErr = AudioScape.checkAssetHealth(self, order, {
+		playerId = opts.playerId,
+		reportPrivate = opts.reportPrivate,
+	})
 	if not health then
 		return nil, healthErr
 	end

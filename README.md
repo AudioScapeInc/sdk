@@ -553,15 +553,24 @@ end
 
 `meta` carries `total`, `ok`, `unavailable`, `private`, and `unknown`. Accepts up to 100 IDs per call and batches internally.
 
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `playerId` | `number?` | — | |
+| `reportPrivate` | `boolean?` | `false` | Report any private assets found back to AudioScape, so they appear in the console with an option to share them |
+
+`reportPrivate` is **off by default**. The result is a list of your private catalog, and inferring consent from a diagnostic call isn't right — the determination is returned to you either way. A failed report never fails the health check.
+
 **Two sources are combined**, because neither is sufficient alone. AudioScape's catalog knows moderation state; only the Roblox engine knows whether an asset your experience can play exists at all. An asset the engine can describe but our catalog doesn't hold is **private to you**.
 
 #### Private audio
 
 Private audio keeps working. Sound banks never remove your seed, so your own assets play exactly as before — we only add public neighbours around them. In `mode = "replace"` we still keep your seed unless we resolved it from our own catalog, because a replacement might not be something your experience has permission to play.
 
-What we can't do is offer similarity or variation *for* a private asset, since we hold no copy. If you want that, you can share access with AudioScape from the Creator Dashboard (asset → Permissions → Experiences). Once ingested, it's served back only to your API key and stays invisible to every other tenant.
+What we can't do is offer similarity or variation *for* a private asset, since we hold no copy.
 
-> **Note:** Roblox asset grants are close to one-way — per Roblox's docs, once a game is granted permission to use a restricted asset that permission cannot be revoked. Worth knowing before you share.
+If you want that, pass `reportPrivate = true` and the assets appear in your console under **Advisor → Private audio in use**, where you can upload the file directly. We analyse it, and it's served back only to your API key — invisible to every other developer. Ask us and we delete both the file and the entitlement.
+
+Sharing the file rather than granting Roblox permissions is deliberate: a Roblox grant to an experience is permanent (per Roblox's docs, once a game is granted permission to use a restricted asset that permission cannot be revoked), and granting a creator requires friending them first. Handing over the file asks less and stays reversible.
 
 This walks the data model, so treat it as a startup or development diagnostic rather than something to poll. On a large place, pass a narrower `roots` list.
 
