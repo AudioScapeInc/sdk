@@ -414,13 +414,6 @@ export type PlaylistOptions = {
 	playerId: number?,
 }
 
--- A slot of interchangeable sounds. Sound effects fire on events rather than
--- playing in sequence, so an SFX playlist is grouped by slot, not ordered.
-export type PlaylistSlot = {
-	label: string,
-	asset_ids: { string },
-}
-
 export type PlaylistInfo = {
 	id: string,
 	name: string,
@@ -430,11 +423,11 @@ export type PlaylistInfo = {
 	-- "music", "sfx", or "mixed". Absent on responses from before SFX support.
 	kind: string?,
 	sound_count: number?,
-	slots: { PlaylistSlot }?,
 }
 
--- A sound in a playlist. Same shape as an sfxSearch result plus the two fields
--- that only mean something inside a playlist.
+-- A sound in a playlist. Same shape as an sfxSearch result plus its position.
+-- SFX playlists are flat: a pool of variants for one sound is what an Audio
+-- Pack is for, and grouping by role is what having more than one playlist is for.
 export type PlaylistSound = {
 	asset_id: string,
 	name: string,
@@ -454,8 +447,6 @@ export type PlaylistSound = {
 	true_peak_dbtp: number?,
 	play_count: number,
 	like_count: number,
-	-- The slot this sound belongs to; sounds sharing a label are variants.
-	label: string?,
 	position: number,
 }
 

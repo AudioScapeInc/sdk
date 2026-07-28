@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.19.0
+
+### Removed
+
+- **`createSoundBank({ playlist_id = ... })` is gone**, along with the `slots` field on the playlist response and the `label` field on each playlist sound. SFX playlists are flat.
+
+  The slot layer was never used: across the whole catalog only two playlists ever carried a slot label, and both were tests. Real SFX playlists organise by having more than one playlist — "ObbySounds: Hits", "LittleMonsters-Vocalizations" — where the playlist name is the role. And because an unlabelled sound became its own slot, a flat playlist resolved to pools of exactly one, so `pick` had nothing to choose between.
+
+  Variation for a single sound is what Audio Packs are for: layers with per-variation gain, cuts and fades.
+
+  Seed-based banks are unchanged and remain the way to expand one asset into a pool:
+
+  ```lua
+  local bank = AudioScape:createSoundBank({
+      seeds = { footstep = "rbxassetid://1837879082" },
+  })
+  bank:resolveAsync()
+
+  sound.SoundId = "rbxassetid://" .. bank:pick("footstep")
+  ```
+
 ## v0.18.0
 
 ### Added

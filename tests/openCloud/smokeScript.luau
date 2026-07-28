@@ -360,17 +360,21 @@ step("getPlaylist (sfx)", function()
 	assert(r.playlist.kind == "sfx", "kind is sfx; got " .. tostring(r.playlist.kind))
 	assert(r.sounds and #r.sounds > 0, "sounds returned")
 	assert(#r.tracks == 0, "an sfx playlist carries no music tracks")
-	assert(r.playlist.slots and #r.playlist.slots > 0, "slots returned")
 
-	-- Every sound belongs to a slot, and the slots account for every sound.
-	local inSlots = 0
-	for _, slot in r.playlist.slots do
-		assert(#slot.asset_ids > 0, "slot '" .. tostring(slot.label) .. "' is not empty")
-		inSlots += #slot.asset_ids
+	-- SFX playlists are flat. Assert the grouping layer is really gone, not
+	-- merely unused: a `slots` field reappearing means the API regressed.
+	assert(r.playlist.slots == nil, "no slots field on a flat sfx playlist")
+	assert(r.playlist.sound_count == #r.sounds, "sound_count matches the sounds returned")
+
+	-- Each sound carries the fields a caller actually plays it with, and no
+	-- slot/label field.
+	for _, sound in r.sounds do
+		assert(type(sound.asset_id) == "string" and #sound.asset_id > 0, "sound has an asset_id")
+		assert(type(sound.position) == "number", "sound has a position")
+		assert(sound.label == nil, "sound carries no slot label")
 	end
-	assert(inSlots == #r.sounds, "slots cover every sound: " .. tostring(inSlots) .. " vs " .. tostring(#r.sounds))
 
-	return { id = r.playlist.id, slots = #r.playlist.slots, sounds = #r.sounds }
+	return { id = r.playlist.id, sounds = #r.sounds }
 end)
 
 -- Analytics: enqueue one event per public track method, force-flush, assert
@@ -581,51 +585,45 @@ step("auditAudio", function()
 	)
 end)
 
--- A bank built from a portal-curated sound bank. The slots are used exactly as
--- chosen, so this asserts the pools match what the playlist declared rather than
--- whatever similarity would have produced.
-step("createSoundBank (from playlist)", function()
+-- The portal-playlist source is gone. What replaces it: read the playlist and
+-- seed a bank from a sound in it. Asserts both halves against the real API —
+-- that the removed option is genuinely rejected, and that the flat path works.
+step("createSoundBank (playlist source removed)", function()
 	local id = fixtures.sfx_playlist_id
 	if not id then
 		return "skipped — no sfx playlists for this key"
 	end
 
+	local rejected = pcall(function()
+		client:createSoundBank({ playlist_id = id })
+	end)
+	assert(not rejected, "playlist_id is no longer a sound-bank source")
+
 	local declared, err = client:getPlaylist({ playlist_id = id })
 	assert(declared, "getPlaylist failed: " .. tostring(err))
+	assert(#declared.sounds > 0, "playlist has sounds to seed from")
 
-	local bank = client:createSoundBank({ playlist_id = id })
+	-- The flat replacement: one sound from the playlist becomes the seed, and
+	-- the bank expands it through the catalog.
+	local seedId = declared.sounds[1].asset_id
+	local bank = client:createSoundBank({ seeds = { fromPlaylist = seedId } })
 	local ok, resolveErr = bank:resolveAsync()
-	assert(ok, "resolveAsync from playlist failed: " .. tostring(resolveErr))
+	assert(ok, "resolveAsync from a playlist sound failed: " .. tostring(resolveErr))
 
-	local slots = 0
-	for _, slot in declared.playlist.slots do
-		slots += 1
-		local pool = bank:getPool(slot.label)
-		assert(
-			#pool == #slot.asset_ids,
-			"slot '" .. slot.label .. "' pool is " .. tostring(#pool) .. ", declared " .. tostring(#slot.asset_ids)
-		)
-		for i, assetId in slot.asset_ids do
-			assert(pool[i] == assetId, "slot '" .. slot.label .. "' differs at index " .. tostring(i))
-		end
-		assert(
-			bank.Pools[slot.label].source == "playlist",
-			"source should be 'playlist', got " .. tostring(bank.Pools[slot.label].source)
-		)
+	local pool = bank:getPool("fromPlaylist")
+	assert(#pool > 0, "pool is not empty")
 
-		-- Picking must still avoid immediate repeats on a curated pool.
-		if #pool > 1 then
-			local previous = nil
-			for n = 1, 20 do
-				local pick = bank:pick(slot.label)
-				assert(pick, "pick returned nil at " .. tostring(n))
-				assert(pick ~= previous, "immediate repeat at " .. tostring(n))
-				previous = pick
-			end
+	if #pool > 1 then
+		local previous = nil
+		for n = 1, 20 do
+			local pick = bank:pick("fromPlaylist")
+			assert(pick, "pick returned nil at " .. tostring(n))
+			assert(pick ~= previous, "immediate repeat at " .. tostring(n))
+			previous = pick
 		end
 	end
 
-	return string.format("slots=%d", slots)
+	return string.format("seed=%s pool=%d", tostring(seedId), #pool)
 end)
 
 -- createSoundBank. The bridging path calls AssetService:GetAudioMetadataAsync,

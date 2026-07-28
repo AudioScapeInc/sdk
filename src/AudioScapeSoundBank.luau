@@ -31,7 +31,6 @@ local DEFAULT_POOL_SIZE = 8
 -- approach AudioScapeMusicPlayer uses for its analytics dependency, so this
 -- module stays independent of init.luau's concrete type.
 type CatalogClient = {
-	getPlaylist: (self: any, options: any) -> (any, string?),
 	lookup: (self: any, options: any) -> (any, string?),
 	search: (self: any, options: any) -> (any, string?),
 	sfxSearch: (self: any, options: any) -> (any, string?),
@@ -42,12 +41,7 @@ type CatalogClient = {
 
 export type SoundBankOptions = {
 	-- Named seeds: { footstep = "rbxassetid://123", impact = "456" }.
-	-- Provide these or `playlist_id`, not both.
-	seeds: { [string]: string }?,
-	-- Build the bank from a sound bank curated in the portal. Each slot becomes
-	-- a pool of exactly the sounds chosen for it, so the sounds a game plays can
-	-- change without shipping code.
-	playlist_id: string?,
+	seeds: { [string]: string },
 	-- "sfx" (default) expands through the sound-effects catalog; "music"
 	-- through the music catalog.
 	kind: string?,
@@ -97,13 +91,7 @@ end
 function AudioScapeSoundBank.new(catalog: CatalogClient, options: SoundBankOptions): SoundBankInstance
 	assert(type(options) == "table", "createSoundBank requires an options table")
 
-	local playlistId = options.playlist_id
-	if playlistId ~= nil then
-		assert(type(playlistId) == "string" and #playlistId > 0, "createSoundBank playlist_id must be a non-empty string")
-		assert(options.seeds == nil, "createSoundBank takes seeds or playlist_id, not both")
-	else
-		assert(type(options.seeds) == "table", "createSoundBank requires a seeds table or a playlist_id")
-	end
+	assert(type(options.seeds) == "table", "createSoundBank requires a seeds table")
 
 	local kind = options.kind or "sfx"
 	assert(kind == "sfx" or kind == "music", 'createSoundBank kind must be "sfx" or "music"')
@@ -130,7 +118,6 @@ function AudioScapeSoundBank.new(catalog: CatalogClient, options: SoundBankOptio
 		_catalog = catalog,
 		_seeds = seeds,
 		_names = names,
-		_playlistId = playlistId,
 		_kind = kind,
 		_mode = mode,
 		_poolSize = math.max(1, options.poolSize or DEFAULT_POOL_SIZE),
@@ -259,70 +246,7 @@ end
 -- already decided what belongs in each slot, and quietly adding sounds they
 -- never reviewed is the same mistake as auto-refreshing their gunshot. Widening
 -- a slot is a decision made in the portal, where they can hear it first.
-function AudioScapeSoundBank._resolveFromPlaylist(self: any): (boolean, string?)
-	local result, err = self._catalog:getPlaylist({
-		playlist_id = self._playlistId,
-		playerId = self._playerId,
-	})
-	if not result then
-		return false, err or "could not load sound bank " .. tostring(self._playlistId)
-	end
-
-	local slots = if type(result.playlist) == "table" then result.playlist.slots else nil
-	if type(slots) ~= "table" then
-		return false, "playlist " .. tostring(self._playlistId) .. " returned no slots"
-	end
-
-	local pools: { [string]: SoundBankPool } = {}
-	local names: { string } = {}
-	for _, slot in slots do
-		local label = if type(slot) == "table" then slot.label else nil
-		local assetIds = if type(slot) == "table" then slot.asset_ids else nil
-		if type(label) == "string" and #label > 0 and type(assetIds) == "table" and #assetIds > 0 then
-			local assets: { string } = {}
-			for _, raw in assetIds do
-				local id = normalizeId(tostring(raw))
-				if id then
-					table.insert(assets, id)
-				end
-			end
-			if #assets > 0 then
-				pools[label] = {
-					name = label,
-					-- The first sound in the slot stands in as the seed, so the
-					-- pool shape matches the seeded path for every consumer.
-					seed_asset_id = assets[1],
-					source = "playlist",
-					assets = assets,
-				}
-				table.insert(names, label)
-			end
-		end
-	end
-
-	if #names == 0 then
-		return false, "playlist " .. tostring(self._playlistId) .. " has no usable slots"
-	end
-
-	table.sort(names)
-	self._names = names
-	self.Pools = pools
-	self.IsResolved = true
-
-	self._catalog:trackCustom("audio_resolve", nil, self._playerId, {
-		source = "playlist",
-		playlist_id = self._playlistId,
-		slots = #names,
-	})
-
-	return true
-end
-
 function AudioScapeSoundBank.resolveAsync(self: any): (boolean, string?)
-	if self._playlistId then
-		return self:_resolveFromPlaylist()
-	end
-
 	local known, err = self:_classifySeeds()
 	if err then
 		return false, err
