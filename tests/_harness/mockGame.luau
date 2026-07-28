@@ -11,6 +11,11 @@ export type Services = {
 	Players: any?,
 	ReplicatedStorage: any?,
 	SoundService: any?,
+	-- Injectable so specs can exercise the paths that ask the engine what an
+	-- asset is — sound-bank seed bridging and checkAssetHealth's private
+	-- determination. Left nil, GetService errors and the SDK's pcall degrades
+	-- to "no engine", which is itself a case worth testing.
+	AssetService: any?,
 }
 
 local function noopConnection()
@@ -158,6 +163,7 @@ local function makeGame(services: Services, opts: { gameId: number?, placeId: nu
 		Players = services.Players or makePlayers(),
 		ReplicatedStorage = services.ReplicatedStorage or makeReplicatedStorage(),
 		SoundService = services.SoundService or {},
+		AssetService = services.AssetService,
 	}
 	return {
 		GetService = function(_, name: string)

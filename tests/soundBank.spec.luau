@@ -227,7 +227,72 @@ do
 	assert(after == pickEvents, "a second flush emits nothing new")
 end
 
--- 11. Validation
+-- 11. Replace mode must NOT drop a seed we could not resolve from our own
+--     catalog. A bridged seed may be audio private to that experience: the
+--     game has permission for its own asset where a substitute might not, so
+--     silently swapping it out is the one outcome worse than not helping.
+do
+	local http = mockHttp.new()
+	-- A fake engine so the seed can actually bridge — without it the bank
+	-- falls through to source "none", which is a different branch (case 4).
+	local sdk = loadSdk({
+		http = http,
+		services = {
+			AssetService = {
+				GetAudioMetadataAsync = function(_, idList: { string })
+					local out = {}
+					for _, contentId in idList do
+						table.insert(out, {
+							AssetId = string.match(contentId, "%d+"),
+							Title = "Private Track",
+							Artist = "Owner",
+							Duration = 30,
+						})
+					end
+					return out
+				end,
+			},
+		},
+	})
+	local AudioScape: any = sdk
+	AudioScape.setApiKey("test-key")
+
+	http:queueResponse(lookupResponse({})) -- seed absent from the catalog
+	http:queueResponse(lookupResponse({ "555" })) -- bridging search finds an anchor
+	http:queueResponse(similarResponse({ "222", "333" }))
+
+	local bank = AudioScape:createSoundBank({
+		seeds = { private = "999" },
+		kind = "music",
+		mode = "replace",
+	})
+	local ok, err = bank:resolveAsync()
+	assert(ok, "resolve failed: " .. tostring(err))
+
+	assert(bank.Pools.private.source == "bridged", "seed bridged; got " .. bank.Pools.private.source)
+
+	local pool = bank:getPool("private")
+	assert(pool[1] == "999", "the unresolved seed still leads the pool in replace mode; got " .. tostring(pool[1]))
+	assert(#pool > 1, "neighbours were still added around it")
+end
+
+-- 12. Replace mode DOES drop a seed we resolved from our own catalog — the
+--     opt-in behaviour is intact for assets we can vouch for.
+do
+	local AudioScape, http = newSdk()
+	http:queueResponse(lookupResponse({ "111" })) -- seed IS in the catalog
+	http:queueResponse(similarResponse({ "222", "333" }))
+
+	local bank = AudioScape:createSoundBank({ seeds = { s = "111" }, mode = "replace" })
+	bank:resolveAsync()
+
+	assert(bank.Pools.s.source == "catalog", "resolved from catalog")
+	for _, id in bank:getPool("s") do
+		assert(id ~= "111", "a catalog-resolved seed is still replaced")
+	end
+end
+
+-- 13. Validation
 do
 	local AudioScape, http = newSdk()
 	http:queueResponse(lookupResponse({}))
