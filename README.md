@@ -444,13 +444,29 @@ sound.SoundId = "rbxassetid://" .. bank:pick("footstep")
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
-| `seeds` | `{ [string]: string }` | — | Named asset IDs, e.g. `{ footstep = "rbxassetid://123" }` |
+| `seeds` | `{ [string]: string }?` | — | Named asset IDs, e.g. `{ footstep = "rbxassetid://123" }` |
+| `playlist_id` | `string?` | — | Build from a sound bank curated in the portal instead. Pass this or `seeds`, not both |
 | `kind` | `string?` | `"sfx"` | `"sfx"` expands through the sound-effects catalog, `"music"` through music |
 | `poolSize` | `number?` | `8` | How many assets to end up with per seed |
 | `mode` | `string?` | `"extend"` | `"extend"` keeps your asset in the pool and adds neighbours; `"replace"` uses neighbours only |
 | `playerId` | `number?` | — | |
 
 **Your asset is never silently swapped.** In the default `extend` mode it leads its own pool — we add to your choice rather than overriding it. `replace` exists for cases where you genuinely don't care which specific clip plays, and you have to ask for it.
+
+### Building from a portal-curated bank
+
+Slots you set up in the portal become pools, so the sounds a game plays can change without shipping code.
+
+```lua
+local bank = AudioScape:createSoundBank({ playlist_id = "sfx-1785256484251" })
+bank:resolveAsync()
+
+sound.SoundId = "rbxassetid://" .. bank:pick("footstep")
+```
+
+Each slot is used **exactly as curated** — no similarity expansion. Whoever built the bank already decided what belongs in each slot, and adding sounds they never listened to isn't ours to do. Widen a slot in the portal, where you can hear it first. `bank.Pools[name].source` reads `"playlist"` on this path.
+
+Everything else is unchanged: `pick` still avoids immediate repeats, and `reportUnavailable` still drops an asset that fails to load.
 
 ### Methods
 
