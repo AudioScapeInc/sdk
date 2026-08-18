@@ -365,13 +365,22 @@ end
 
 -- Fetch beat grid + section structure for a track (beat-sync animations,
 -- lighting cues). Polymorphic input — see similar() for the (input, extras?)
--- contract.
-function AudioScapeClient.getStructure(self: AudioScapeClientInstance, input: AssetIdResolvable): (any, string?)
+-- contract. Pass `include_metadata = true` (on the options table or extras)
+-- to get each section/phrase's authored key/value cue pairs verbatim.
+function AudioScapeClient.getStructure(
+	self: AudioScapeClientInstance,
+	input: AssetIdResolvable,
+	extras: { include_metadata: boolean? }?
+): (any, string?)
 	local assetId = resolveAssetId(input)
 	if not assetId then
 		return nil, "getStructure requires an asset_id string, a track table, a Sound, or an AudioPlayer"
 	end
-	return invoke(getRemotes(self), "GetStructure", { asset_id = assetId })
+	local opts: any = extras or (type(input) == "table" and input or {})
+	return invoke(getRemotes(self), "GetStructure", {
+		asset_id = assetId,
+		include_metadata = if opts.include_metadata == true then true else nil,
+	})
 end
 
 return AudioScapeClient

@@ -42,10 +42,33 @@ http:reset()
 local rejected, badErr = client:browse({ type = "not-a-type" })
 assert(rejected == nil, "bad type rejected without HTTP")
 assert(
-	badErr and badErr:find("artist, album, genre, mood, trending", 1, true),
+	badErr and badErr:find("artist, album, genre, mood, trending, game", 1, true),
 	"err lists valid types; got: " .. tostring(badErr)
 )
 assert(#http.requests == 0, "no HTTP for invalid type")
+
+-- game: accepted type; list mode sends only type
+http:reset()
+http:queueResponse({ Success = true, StatusCode = 200, Body = "{}" })
+local gameResult, gameErr = client:browse({ type = "game" })
+assert(gameResult and not gameErr, "browse game should pass pre-flight; err: " .. tostring(gameErr))
+recorded = http.requests[1]
+assert(recorded.url:find("type=game", 1, true), "type=game in query; got " .. recorded.url)
+assert(not recorded.url:find("asset_id", 1, true), "nil asset_id should not appear in URL")
+
+-- game drill-down: universe id travels in `name` as a string
+http:reset()
+http:queueResponse({ Success = true, StatusCode = 200, Body = "{}" })
+client:browse({ type = "game", name = "66654135" })
+recorded = http.requests[1]
+assert(recorded.url:find("name=66654135", 1, true), "name=<universe_id> in query; got " .. recorded.url)
+
+-- game reverse lookup: asset_id forwards verbatim
+http:reset()
+http:queueResponse({ Success = true, StatusCode = 200, Body = "{}" })
+client:browse({ type = "game", asset_id = "1841647093" })
+recorded = http.requests[1]
+assert(recorded.url:find("asset_id=1841647093", 1, true), "asset_id in query; got " .. recorded.url)
 
 -- 5xx → server error message. Re-declare locals so luau-lsp doesn't narrow
 -- `err` to one specific status string after the first assert.

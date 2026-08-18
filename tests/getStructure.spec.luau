@@ -104,3 +104,53 @@ do
 		"extras.playerId → X-Player-Id header; got: " .. tostring(recorded.headers and recorded.headers["X-Player-Id"])
 	)
 end
+
+-- include_metadata: forwards in the body, forks the cache per variant, and
+-- the authored pairs round-trip on sections
+do
+	http:reset()
+	http:queueResponse({
+		Success = true,
+		StatusCode = 200,
+		Body = serde.encode("json", {
+			asset_id = "777",
+			sections = {
+				{
+					start = 0.78,
+					["end"] = 5.64,
+					label = "light_cue_1",
+					metadata = { type = "lighting_cluster", amount = 5 },
+				},
+			},
+			phrases = {},
+		}),
+	})
+	local rich, richErr = client:getStructure({ asset_id = "777", include_metadata = true })
+	assert(rich and not richErr, "metadata variant should succeed; err: " .. tostring(richErr))
+	assert(#http.requests == 1, "one HTTP call for the metadata variant")
+	local sent = serde.decode("json", http.requests[1].body)
+	assert(sent.include_metadata == true, "include_metadata=true forwarded in the body")
+	assert(
+		rich.sections[1].metadata and rich.sections[1].metadata.type == "lighting_cluster",
+		"authored pairs round-trip on the section"
+	)
+	assert(rich.sections[1].metadata.amount == 5, "numeric metadata values survive")
+
+	-- plain call for the same asset is a cache MISS (different variant) and
+	-- must not send the flag
+	http:queueResponse({
+		Success = true,
+		StatusCode = 200,
+		Body = serde.encode("json", { asset_id = "777", sections = {}, phrases = {} }),
+	})
+	local plain = client:getStructure({ asset_id = "777" })
+	assert(plain, "plain variant fetches")
+	assert(#http.requests == 2, "plain variant is a separate cache entry; got " .. #http.requests)
+	local sentPlain = serde.decode("json", http.requests[2].body)
+	assert(sentPlain.include_metadata == nil, "plain call omits the flag from the body")
+
+	-- and each variant now serves from its own cache slot
+	client:getStructure({ asset_id = "777", include_metadata = true })
+	client:getStructure({ asset_id = "777" })
+	assert(#http.requests == 2, "both variants cached independently; got " .. #http.requests)
+end

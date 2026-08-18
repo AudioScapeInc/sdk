@@ -12,7 +12,7 @@ Add to your `wally.toml`:
 
 ```toml
 [server-dependencies]
-AudioScape = "this-fifo/audioscape-sdk@0.19.0"
+AudioScape = "this-fifo/audioscape-sdk@0.20.0"
 ```
 
 Then run:
@@ -192,7 +192,7 @@ local result = AudioScape:similar(soundInstance)
 
 ### `AudioScape:browse(options)`
 
-Browse by artist, album, genre, mood, or trending.
+Browse by artist, album, genre, mood, trending, or game.
 
 ```lua
 -- List all genres
@@ -211,9 +211,9 @@ local result, err = AudioScape:browse({ type = "trending", limit = 50 })
 -- result = { tracks, meta }
 ```
 
-**Browse types:** `artist`, `album`, `genre`, `mood`, `trending`
+**Browse types:** `artist`, `album`, `genre`, `mood`, `trending`, `game`
 
-**Sort (drill-down only):** `popular` (default — global popularity ranking, omits tracks with no engagement), `alpha` (track name A→Z), `recent` (newest first). Ignored for list mode and for `trending` (already popularity-ordered). Pick `alpha` or `recent` to surface tracks that haven't accumulated engagement yet.
+**Sort (drill-down only):** `popular` (default — global popularity ranking), `alpha` (track name A→Z), `recent` (newest first). Ignored for list mode and for `trending` (already popularity-ordered). Under `popular`, `genre` and `mood` omit tracks with no engagement — pick `alpha` or `recent` to surface them; `artist`, `album`, and `game` include them, sorted last.
 
 Trending is a popularity-ranked list of music tracks refreshed daily, capped at 200 entries. Player engagement signals (plays, favorites, votes, queue adds, listen duration, plus custom events) are exponentially decayed over a 60-day window with a 30-day half-life, so recent activity dominates.
 
@@ -228,6 +228,28 @@ local result, err = AudioScape:browse({ type = "trending", region = "eu", limit 
 ```
 
 > Regional trending must be enabled for your API key. Until then, `region` is ignored and you get the global list. Contact us via the [Developer Portal](https://developer.audioscape.ai) to enable it.
+
+**Browse by game:** `type = "game"` browses Roblox experiences by the catalog music heard in them — the mapping refreshes weekly from Roblox's own music-discovery data.
+
+```lua
+-- List games with catalog music, ordered by player count (min 5 tracks)
+local result, err = AudioScape:browse({ type = "game", limit = 20 })
+-- items = { { universe_id, name, creator_name, root_place_id, playing, visits, track_count } }
+
+for _, item in result.items do
+    local game = item :: AudioScape.BrowseGameItem
+    -- Icons come free in Roblox clients:
+    icon.Image = `rbxthumb://type=GameIcon&id={game.universe_id}&w=150&h=150`
+end
+
+-- Drill into a game's tracks (universe_id travels as a string in `name`)
+local tracks = AudioScape:browse({ type = "game", name = "66654135", limit = 25 })
+
+-- Reverse lookup: the games a track has been heard in
+local games = AudioScape:browse({ type = "game", asset_id = "1841647093" })
+```
+
+`playing` and `visits` come from the last catalog sync, not live CCU. Any mapped game resolves by `universe_id`, even below the 5-track list floor.
 
 ### `AudioScape:sfxBrowse(options)`
 
@@ -319,6 +341,22 @@ local structure = AudioScape:getStructure(soundInstance)
 ```
 
 `label` values come from: `Intro`, `Verse`, `Chorus`, `Drop`, `Bridge`, `Climax`, `Outro`, `Main`, `Break`, `Build`, `Breakdown`, `Transition`, `Peak`. `energy` is `1`–`4`.
+
+**Section metadata:** pass `include_metadata = true` and every section/phrase carries its authored key/value pairs verbatim in `metadata` — custom cue parameters (lighting amounts, movement paths, easing styles) beyond the flattened fields. Entries without authored pairs return an empty table. Drive custom events straight from authored cue sections:
+
+```lua
+local structure = AudioScape:getStructure({ asset_id = "1843209165", include_metadata = true })
+
+for _, section in structure.sections do
+    if section.metadata.type == "Move" then
+        -- e.g. { type = "Move", path = "CueObjects.Part_1", endPoint = "0,10,0",
+        --        startPoint = "0,0,0", easingStyle = "Quad", relative = "true" }
+        task.delay(section.start, function()
+            runMoveCue(section.metadata, section["end"] - section.start)
+        end)
+    end
+end
+```
 
 > **Note on AudioPlayer:** v0.11.0 auto-resolves `audioPlayer.Asset` (the legacy ContentId field). If your project uses the newer `audioPlayer.AudioContent` (a `Content` userdata), pass `audioPlayer.AudioContent.Uri` yourself for now.
 
