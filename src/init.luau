@@ -15,6 +15,7 @@ local VALID_BROWSE_TYPES = {
 	genre = true,
 	mood = true,
 	trending = true,
+	game = true,
 }
 
 local VALID_SFX_BROWSE_TYPES = {
@@ -135,6 +136,7 @@ export type AssetIdResolvable = string | { asset_id: string, [string]: any } | S
 -- Track / Sound / string and still want limit/offset/filters/playerId.
 export type StructureExtras = {
 	playerId: number?,
+	include_metadata: boolean?,
 }
 
 export type SimilarExtras = {
@@ -178,13 +180,21 @@ export type SfxSimilarExtras = {
 }
 
 export type BrowseOptions = {
-	type: string, -- "artist" | "album" | "genre" | "mood" | "trending"
+	type: string, -- "artist" | "album" | "genre" | "mood" | "trending" | "game"
+	-- Drill-down key. For type = "game" pass the numeric universe id as a
+	-- string (from BrowseGameItem.universe_id); other types take the entity
+	-- name (or genre slug).
 	name: string?,
-	-- "popular" (default — popularity ranking, omits tracks with no
-	-- engagement), "alpha" (track name A→Z), or "recent" (newest first).
-	-- Drill-down only; ignored for list mode and for type = "trending"
-	-- (already popularity-ordered). Pick alpha or recent to surface fresh
-	-- uploads that haven't accumulated engagement yet.
+	-- type = "game" only: reverse lookup — list the games this track has
+	-- been heard in, as game items. Numeric asset id as a string. Ignored
+	-- when `name` is present.
+	asset_id: string?,
+	-- "popular" (default — popularity ranking), "alpha" (track name A→Z),
+	-- or "recent" (newest first). Drill-down only; ignored for list mode
+	-- and for type = "trending" (already popularity-ordered). Under popular,
+	-- genre/mood omit tracks with no engagement; artist/album/game include
+	-- them, sorted last. Pick alpha or recent to surface fresh uploads
+	-- under genre/mood.
 	sort: string?,
 	limit: number?,
 	offset: number?,
@@ -316,6 +326,9 @@ export type BrowseListResult = {
 		limit: number,
 		offset: number,
 		type: string,
+		-- Echo of the queried track on a type = "game" asset_id reverse
+		-- lookup; absent everywhere else.
+		asset_id: number?,
 	},
 }
 
@@ -337,6 +350,24 @@ export type BrowseGenreItem = {
 	slug: string,
 	-- Display label (currently equal to `name`, may diverge in the future).
 	display_name: string,
+	track_count: number,
+}
+
+-- Typed shape of an item from `AudioScape:browse({ type = "game" }).items[i]`
+-- (and from the asset_id reverse lookup). Cast manually, same pattern as
+-- BrowseGenreItem above.
+export type BrowseGameItem = {
+	-- Drill-down key: pass back as tostring(universe_id) in the `name`
+	-- parameter to get this game's tracks.
+	universe_id: number,
+	-- Experience title, e.g. "Brookhaven RP".
+	name: string,
+	creator_name: string?,
+	root_place_id: number?,
+	-- Player count / visit total at the last catalog sync — not live values.
+	playing: number?,
+	visits: number?,
+	-- Catalog tracks heard in this game.
 	track_count: number,
 }
 
@@ -367,6 +398,10 @@ export type SfxBrowseResult = {
 export type StructureOptions = {
 	asset_id: string,
 	playerId: number?,
+	-- When true, every section/phrase carries its authored key/value pairs
+	-- verbatim in `metadata` — cue parameters (lighting amounts, movement
+	-- paths, easing styles) that the flattened shape otherwise omits.
+	include_metadata: boolean?,
 }
 
 export type BeatGrid = {
@@ -386,6 +421,10 @@ export type Section = {
 	bar_end: number?,
 	bars: number?,
 	color: string?,
+	-- Present only when the structure was fetched with include_metadata =
+	-- true: the entry's authored key/value pairs, verbatim (empty table for
+	-- entries with none).
+	metadata: { [string]: string | number }?,
 }
 
 export type StructureResult = {
@@ -1230,13 +1269,14 @@ function AudioScape.browse(
 	options: BrowseOptions
 ): (BrowseListResult | BrowseTracksResult | nil, string?)
 	if type(options.type) ~= "string" or not VALID_BROWSE_TYPES[options.type] then
-		return nil, "browse requires type to be one of: artist, album, genre, mood, trending"
+		return nil, "browse requires type to be one of: artist, album, genre, mood, trending, game"
 	end
 
 	-- GET so CloudFront edge-caches.
 	return requestGet(self, "/v1/browse", {
 		type = options.type,
 		name = options.name,
+		asset_id = options.asset_id,
 		limit = options.limit,
 		offset = options.offset,
 		sort = options.sort,
@@ -1301,17 +1341,27 @@ function AudioScape.getStructure(
 
 	local opts: any = extras or (type(input) == "table" and input or {})
 
-	local cached = self._structureCache[assetId]
+	-- The metadata variant is a distinct payload — cache it under its own
+	-- key so plain getStructure (and beatAtTime/sectionAtTime, which fetch
+	-- through it) never serve the heavier shape, and vice versa.
+	local includeMetadata = opts.include_metadata == true
+	local cacheKey = if includeMetadata then assetId .. ":meta" else assetId
+
+	local cached = self._structureCache[cacheKey]
 	if cached then
 		return cached, nil
 	end
 
-	local result, err = request(self, "/v1/track/structure", { asset_id = assetId }, opts.playerId)
+	local body: { [string]: any } = { asset_id = assetId }
+	if includeMetadata then
+		body.include_metadata = true
+	end
+	local result, err = request(self, "/v1/track/structure", body, opts.playerId)
 	if not result then
 		return nil, err
 	end
 
-	self._structureCache[assetId] = result
+	self._structureCache[cacheKey] = result
 	return result, nil
 end
 
@@ -2377,6 +2427,7 @@ function AudioScape.enableClientAccess(self: AudioScapeInstance)
 		end
 		return self:getStructure({
 			asset_id = options.asset_id,
+			include_metadata = if options.include_metadata == true then true else nil,
 			playerId = player.UserId,
 		})
 	end)

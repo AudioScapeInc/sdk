@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.20.0
+
+### Added
+
+- **Browse by game** — `AudioScape:browse({ type = "game" })` lists Roblox experiences by the catalog music heard in them (ordered by player count, minimum 5 tracks). Drill into a game's tracks with `name = "<universe_id>"`, or reverse-look-up the games a track has been heard in with `asset_id = "<id>"`. New `BrowseGameItem` type carries `universe_id`, `name`, `creator_name`, `root_place_id`, `playing`, `visits`, and `track_count`; build icons with `rbxthumb://type=GameIcon&id=<universe_id>`. The game→track mapping refreshes weekly; `playing`/`visits` reflect the last sync, not live CCU.
+
+- **Section metadata on track structure** — `AudioScape:getStructure({ asset_id = ..., include_metadata = true })` returns each section/phrase's authored key/value pairs verbatim in a new `metadata` field: custom cue parameters (lighting amounts, movement paths, easing styles) beyond the flattened `label`/`energy`/`bars` fields. Entries without authored pairs return an empty table. The metadata variant caches independently of the plain structure, so `beatAtTime`/`sectionAtTime` are unaffected. Also available through `AudioScapeClient.getStructure` with the same flag.
+
+### Fixed
+
+- Corrected the `sort = "popular"` documentation: only `genre` and `mood` drill-downs omit tracks with no engagement; `artist`, `album`, and `game` include them, sorted last.
+
 ## v0.19.0
 
 ### Removed
