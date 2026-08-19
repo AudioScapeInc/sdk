@@ -12,7 +12,7 @@ Add to your `wally.toml`:
 
 ```toml
 [server-dependencies]
-AudioScape = "this-fifo/audioscape-sdk@0.20.0"
+AudioScape = "this-fifo/audioscape-sdk@0.20.1"
 ```
 
 Then run:
@@ -342,7 +342,7 @@ local structure = AudioScape:getStructure(soundInstance)
 
 `label` values come from: `Intro`, `Verse`, `Chorus`, `Drop`, `Bridge`, `Climax`, `Outro`, `Main`, `Break`, `Build`, `Breakdown`, `Transition`, `Peak`. `energy` is `1`–`4`.
 
-**Section metadata:** pass `include_metadata = true` and every section/phrase carries its authored key/value pairs verbatim in `metadata` — custom cue parameters (lighting amounts, movement paths, easing styles) beyond the flattened fields. Entries without authored pairs return an empty table. Drive custom events straight from authored cue sections:
+**Section metadata & lanes:** pass `include_metadata = true` and every section/phrase carries its authored key/value pairs verbatim in `metadata` — custom cue parameters (lighting amounts, movement paths, easing styles) beyond the flattened fields (empty table when none) — plus a `lane` name grouping entries into parallel timeline rows, with the ordered distinct names in a top-level `lanes` array. Entries sharing a lane string belong to the same row; time-overlapping entries in different lanes run concurrently. Drive custom events straight from authored cue sections:
 
 ```lua
 local structure = AudioScape:getStructure({ asset_id = "1843209165", include_metadata = true })

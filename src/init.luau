@@ -423,8 +423,11 @@ export type Section = {
 	color: string?,
 	-- Present only when the structure was fetched with include_metadata =
 	-- true: the entry's authored key/value pairs, verbatim (empty table for
-	-- entries with none).
+	-- entries with none), and its resolved lane — the named parallel timeline
+	-- row this entry belongs to. Entries sharing a lane string are in the
+	-- same row; time-overlapping entries in different lanes run concurrently.
 	metadata: { [string]: string | number }?,
+	lane: string?,
 }
 
 export type StructureResult = {
@@ -439,6 +442,9 @@ export type StructureResult = {
 	-- crossfades to `phrases`; finer cues to `sections`.
 	sections: { Section },
 	phrases: { Section },
+	-- Only with include_metadata = true: ordered distinct lane names across
+	-- sections + phrases (the grouping key for Section.lane).
+	lanes: { string }?,
 }
 
 export type BeatHit = {

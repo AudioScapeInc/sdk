@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.20.1
+
+### Added
+
+- **Lane types on track structure** — when `include_metadata = true`, each section/phrase now also carries `lane` (its named parallel timeline row) and the result a top-level ordered `lanes` array. This release only adds the Luau type annotations and docs — the fields already flow through at runtime on v0.20.0.
+
 ## v0.20.0
 
 ### Added
