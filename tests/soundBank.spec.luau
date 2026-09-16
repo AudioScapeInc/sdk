@@ -1,5 +1,6 @@
 --!strict
--- Unit tests for AudioScapeSoundBank.
+-- Unit tests for AudioScapeSoundBank (music-kind banks: /v1/search lookup
+-- then similar; SFX-kind classification lives in soundBankSfx.spec.luau).
 --
 -- The bridging path (GetAudioMetadataAsync for seeds our catalog doesn't
 -- hold) needs a real engine and is covered in the Open Cloud smoke instead;
@@ -55,7 +56,7 @@ do
 	http:queueResponse(lookupResponse({ "111" }))
 	http:queueResponse(similarResponse({ "222", "333", "444" }))
 
-	local bank = AudioScape:createSoundBank({ seeds = { footstep = "rbxassetid://111" } })
+	local bank = AudioScape:createSoundBank({ seeds = { footstep = "rbxassetid://111" }, kind = "music" })
 	local ok, err = bank:resolveAsync()
 	assert(ok, "resolve failed: " .. tostring(err))
 
@@ -75,6 +76,7 @@ do
 	local bank = AudioScape:createSoundBank({
 		seeds = { footstep = "rbxassetid://111" },
 		mode = "replace",
+		kind = "music",
 	})
 	bank:resolveAsync()
 
@@ -91,7 +93,7 @@ do
 	http:queueResponse(lookupResponse({ "111" }))
 	http:queueResponse(similarResponse({ "222", "333", "444", "555", "666" }))
 
-	local bank = AudioScape:createSoundBank({ seeds = { s = "111" }, poolSize = 3 })
+	local bank = AudioScape:createSoundBank({ seeds = { s = "111" }, poolSize = 3, kind = "music" })
 	bank:resolveAsync()
 	assert(#bank:getPool("s") == 3, "pool capped at poolSize; got " .. tostring(#bank:getPool("s")))
 end
@@ -103,7 +105,7 @@ do
 	-- the mock has no AssetService for, so it pcalls out and yields no anchor.
 	http:queueResponse(lookupResponse({}))
 
-	local bank = AudioScape:createSoundBank({ seeds = { s = "999" }, mode = "replace" })
+	local bank = AudioScape:createSoundBank({ seeds = { s = "999" }, mode = "replace", kind = "music" })
 	local ok = bank:resolveAsync()
 	assert(ok, "resolve succeeds even when nothing can be expanded")
 
@@ -118,7 +120,7 @@ do
 	http:queueResponse(lookupResponse({ "111" }))
 	http:queueResponse(similarResponse({ "222", "333" }))
 
-	local bank = AudioScape:createSoundBank({ seeds = { s = "111" } })
+	local bank = AudioScape:createSoundBank({ seeds = { s = "111" }, kind = "music" })
 	bank:resolveAsync()
 
 	local previous: string? = nil
@@ -135,7 +137,7 @@ do
 	local AudioScape, http = newSdk()
 	http:queueResponse(lookupResponse({}))
 
-	local bank = AudioScape:createSoundBank({ seeds = { s = "999" } })
+	local bank = AudioScape:createSoundBank({ seeds = { s = "999" }, kind = "music" })
 	bank:resolveAsync()
 	assert(bank:pick("s") == "999", "single-asset pool returns the only asset")
 	assert(bank:pick("s") == "999", "and keeps returning it rather than nil")
@@ -145,7 +147,7 @@ end
 do
 	local AudioScape, http = newSdk()
 	http:queueResponse(lookupResponse({}))
-	local bank = AudioScape:createSoundBank({ seeds = { s = "1" } })
+	local bank = AudioScape:createSoundBank({ seeds = { s = "1" }, kind = "music" })
 	bank:resolveAsync()
 	assert(bank:pick("nope") == nil, "unknown pool name yields nil")
 	assert(#bank:getPool("nope") == 0, "unknown pool yields an empty list")
@@ -157,7 +159,7 @@ do
 	http:queueResponse(lookupResponse({ "111" }))
 	http:queueResponse(similarResponse({ "222", "333" }))
 
-	local bank = AudioScape:createSoundBank({ seeds = { s = "111" } })
+	local bank = AudioScape:createSoundBank({ seeds = { s = "111" }, kind = "music" })
 	bank:resolveAsync()
 
 	assert(bank:reportUnavailable("222"), "first report returns true")
@@ -174,7 +176,7 @@ do
 	http:queueResponse(lookupResponse({ "111" }))
 	http:queueResponse(similarResponse({ "222" }))
 
-	local bank = AudioScape:createSoundBank({ seeds = { s = "111" } })
+	local bank = AudioScape:createSoundBank({ seeds = { s = "111" }, kind = "music" })
 	bank:resolveAsync()
 	bank:reportUnavailable("111")
 	bank:reportUnavailable("222")
@@ -188,7 +190,7 @@ do
 	http:queueResponse(lookupResponse({ "111" }))
 	http:queueResponse(similarResponse({ "222" }))
 
-	local bank = AudioScape:createSoundBank({ seeds = { s = "111" } })
+	local bank = AudioScape:createSoundBank({ seeds = { s = "111" }, kind = "music" })
 	bank:resolveAsync()
 
 	-- resolveAsync emits one audio_resolve event per seed.
@@ -283,7 +285,7 @@ do
 	http:queueResponse(lookupResponse({ "111" })) -- seed IS in the catalog
 	http:queueResponse(similarResponse({ "222", "333" }))
 
-	local bank = AudioScape:createSoundBank({ seeds = { s = "111" }, mode = "replace" })
+	local bank = AudioScape:createSoundBank({ seeds = { s = "111" }, mode = "replace", kind = "music" })
 	bank:resolveAsync()
 
 	assert(bank.Pools.s.source == "catalog", "resolved from catalog")

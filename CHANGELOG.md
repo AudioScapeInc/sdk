@@ -6,6 +6,10 @@
 
 - **`getPlaylist` and `listPlaylists` now use GET** — the requests carry the same parameters in the query string and hit the same endpoint, but GET lets CloudFront cache the response at the edge (60s TTL). When many servers boot against the same playlist at once, they now share one origin request instead of each hitting the API. No call-site changes; POST remains accepted server-side for older SDK versions.
 
+### Fixed
+
+- **SFX sound banks now recognise SFX-only seeds.** `createSoundBank({ kind = "sfx" })` classified its seeds through the music-catalog lookup, so a seed that exists only in the SFX catalog was treated as unknown and its pool collapsed to the seed alone (`source = "none"`). SFX seeds are now classified through `/v1/sfx/similar`, which supplies the pool in the same request, so resolving an SFX bank also makes one request fewer.
+
 ## v0.20.1
 
 ### Added

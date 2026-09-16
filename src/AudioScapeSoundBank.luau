@@ -130,12 +130,41 @@ function AudioScapeSoundBank.new(catalog: CatalogClient, options: SoundBankOptio
 		-- Count locally and emit one rolled-up event per flush instead.
 		_pickCounts = {},
 		_unavailable = {},
+		-- Neighbours fetched while classifying SFX seeds (see _classifySeeds),
+		-- so _neighbours doesn't repeat the same /v1/sfx/similar call.
+		_neighbourCache = {},
 	}, AudioScapeSoundBank)
 
 	return (self :: any) :: SoundBankInstance
 end
 
--- Which seeds does the catalog already know? One request per 100 seeds.
+local function neighbourIds(result: any): { string }
+	local ids: { string } = {}
+	if result and result.tracks then
+		for _, track in result.tracks :: { any } do
+			table.insert(ids, tostring(track.asset_id))
+		end
+	end
+	return ids
+end
+
+function AudioScapeSoundBank._neighbourExtras(self: any): { [string]: any }
+	return {
+		limit = self._poolSize,
+		-- Near-identical uploads are the opposite of variation, so drop them.
+		dedupe = true,
+		playerId = self._playerId,
+	}
+end
+
+-- Which seeds does the catalog already know?
+--
+-- Music seeds: one /v1/search lookup per 100 seeds. SFX seeds: that lookup
+-- only covers the music catalog, so an SFX-only asset came back unknown and
+-- was bridged or dropped even though /v1/sfx/similar knows it. SFX seeds are
+-- classified through sfxSimilar instead — a 200 proves the seed is in the SFX
+-- catalog and already carries its neighbours (cached for _neighbours); a 404
+-- means unknown and falls through to bridging like before.
 function AudioScapeSoundBank._classifySeeds(self: any): ({ [string]: boolean }, string?)
 	local ids: { string } = {}
 	local seen: { [string]: boolean } = {}
@@ -148,6 +177,19 @@ function AudioScapeSoundBank._classifySeeds(self: any): ({ [string]: boolean }, 
 	end
 
 	local known: { [string]: boolean } = {}
+	if self._kind == "sfx" then
+		for _, id in ids do
+			local result, err = self._catalog:sfxSimilar(id, self:_neighbourExtras())
+			if result then
+				known[id] = true
+				self._neighbourCache[id] = neighbourIds(result)
+			elseif err and not err:find("(404)", 1, true) then
+				return known, err
+			end
+		end
+		return known, nil
+	end
+
 	for start = 1, #ids, LOOKUP_BATCH_SIZE do
 		local batch: { string } = {}
 		for i = start, math.min(start + LOOKUP_BATCH_SIZE - 1, #ids) do
@@ -217,26 +259,18 @@ function AudioScapeSoundBank._bridgeSeeds(self: any, ids: { string }): { [string
 end
 
 function AudioScapeSoundBank._neighbours(self: any, anchorId: string): { string }
-	local extras = {
-		limit = self._poolSize,
-		-- Near-identical uploads are the opposite of variation, so drop them.
-		dedupe = true,
-		playerId = self._playerId,
-	}
+	local cached = self._neighbourCache[anchorId]
+	if cached then
+		return cached
+	end
+	local extras = self:_neighbourExtras()
 	local result
 	if self._kind == "sfx" then
 		result = self._catalog:sfxSimilar(anchorId, extras)
 	else
 		result = self._catalog:similar(anchorId, extras)
 	end
-
-	local ids: { string } = {}
-	if result and result.tracks then
-		for _, track in result.tracks :: { any } do
-			table.insert(ids, tostring(track.asset_id))
-		end
-	end
-	return ids
+	return neighbourIds(result)
 end
 
 -- Resolve every seed into a pool. Safe to call more than once; it rebuilds.
@@ -247,6 +281,7 @@ end
 -- never reviewed is the same mistake as auto-refreshing their gunshot. Widening
 -- a slot is a decision made in the portal, where they can hear it first.
 function AudioScapeSoundBank.resolveAsync(self: any): (boolean, string?)
+	self._neighbourCache = {}
 	local known, err = self:_classifySeeds()
 	if err then
 		return false, err
