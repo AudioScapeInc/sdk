@@ -735,7 +735,8 @@ local function buildQuery(params: { [string]: any }): string
 end
 
 -- GET sibling of request() for endpoints CloudFront edge-caches
--- (browse, sfxBrowse, sfxTaxonomy, similar, sfxSimilar). Flagged as a v1.0.0
+-- (browse, sfxBrowse, sfxTaxonomy, similar, sfxSimilar, getPlaylist,
+-- listPlaylists). Flagged as a v1.0.0
 -- cleanup candidate to fold both into one method-aware helper.
 local function requestGet(
 	self: AudioScapeInstance,
@@ -1313,19 +1314,16 @@ function AudioScape.getPlaylist(self: AudioScapeInstance, options: PlaylistOptio
 		return nil, "getPlaylist requires a non-empty playlist_id string"
 	end
 
-	local body: { [string]: any } = {
+	-- GET so CloudFront can serve repeat fetches of the same playlist from
+	-- the edge (60s TTL): every server booting against the same playlist_id
+	-- shares one origin request instead of each hitting the API.
+	return requestGet(self, "/v1/playlist", {
 		playlist_id = options.playlist_id,
-	}
-
-	return request(self, "/v1/playlist", body, options.playerId)
+	}, options.playerId)
 end
 
 function AudioScape.listPlaylists(self: AudioScapeInstance, playerId: number?): (ListPlaylistsResult?, string?)
-	local body: { [string]: any } = {
-		action = "list",
-	}
-
-	return request(self, "/v1/playlist", body, playerId)
+	return requestGet(self, "/v1/playlist", { action = "list" }, playerId)
 end
 
 --[[ ──────────────────────────────────────────

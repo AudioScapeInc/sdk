@@ -12,7 +12,7 @@ Add to your `wally.toml`:
 
 ```toml
 [server-dependencies]
-AudioScape = "this-fifo/audioscape-sdk@0.20.1"
+AudioScape = "this-fifo/audioscape-sdk@0.21.0"
 ```
 
 Then run:
@@ -382,7 +382,7 @@ end
 
 ### `AudioScape:getPlaylist(options)`
 
-Fetch a configured playlist and its tracks. Playlists are created in the [Developer Portal](https://developer.audioscape.ai/configure).
+Fetch a configured playlist and its tracks. Playlists are created in the [Developer Portal](https://developer.audioscape.ai/configure). Responses are edge-cached for 60 seconds, so many servers fetching the same playlist share one API request; portal edits show up within a minute.
 
 ```lua
 local result, err = AudioScape:getPlaylist({

@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.21.0
+
+### Changed
+
+- **`getPlaylist` and `listPlaylists` now use GET** — the requests carry the same parameters in the query string and hit the same endpoint, but GET lets CloudFront cache the response at the edge (60s TTL). When many servers boot against the same playlist at once, they now share one origin request instead of each hitting the API. No call-site changes; POST remains accepted server-side for older SDK versions.
+
 ## v0.20.1
 
 ### Added
