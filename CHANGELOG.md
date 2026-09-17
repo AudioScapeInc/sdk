@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.22.0
+
+### Added
+
+- **Seed lists on `similar` and `sfxSimilar`** — pass a list instead of one asset (`AudioScape:similar(playlist.tracks, { limit = 20 })`, or `{ asset_ids = { ... }, limit = 20 }`) and results sound like the set as a whole rather than any one track: playlist continuation for music, variety packs for SFX. Each element can be anything the single-seed form accepts (asset_id string, Track, `Sound`, `AudioPlayer`); up to 100 seeds; seeds are never returned. `result.meta.seeds_used` counts the seeds that resolved and `result.meta.seeds_ignored` lists the ids skipped (unknown, not yet analyzed, or not public). Available through `AudioScapeClient.similar` / `sfxSimilar` too.
+
 ## v0.21.0
 
 ### Changed

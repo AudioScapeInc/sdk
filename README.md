@@ -12,7 +12,7 @@ Add to your `wally.toml`:
 
 ```toml
 [server-dependencies]
-AudioScape = "this-fifo/audioscape-sdk@0.21.0"
+AudioScape = "this-fifo/audioscape-sdk@0.22.0"
 ```
 
 Then run:
@@ -168,7 +168,8 @@ local result, err = AudioScape:lookup({
 
 Find tracks that sound similar to a given track. `input` is anything that
 carries an asset_id — a string, a Track from a previous response, a `Sound`,
-or an `AudioPlayer`.
+or an `AudioPlayer` — or a list of those (up to 100), in which case results
+sound like the set as a whole.
 
 ```lua
 local result, err = AudioScape:similar({
@@ -188,6 +189,13 @@ local result = AudioScape:similar(playlist.tracks[1], { limit = 10 })
 
 -- Shorthand: pass a playing Sound directly
 local result = AudioScape:similar(soundInstance)
+
+-- Playlist continuation: pass a list (strings, Tracks, Sounds) and get
+-- tracks that sound like the whole set. Seeds are never returned; page with
+-- `offset` to build the next playlist.
+local result = AudioScape:similar(playlist.tracks, { limit = 20 })
+-- result.meta.seeds_used     -- seeds that resolved and were blended
+-- result.meta.seeds_ignored  -- ids skipped: unknown, not yet analyzed, or not public
 ```
 
 ### `AudioScape:browse(options)`
@@ -291,7 +299,8 @@ local result, err = AudioScape:sfxSearch({
 ### `AudioScape:sfxSimilar(input, extras?)`
 
 Find sound effects acoustically similar to a given asset. Same polymorphic
-input as `AudioScape:similar`.
+input as `AudioScape:similar`, including a list of seeds to grow a variety
+pack from the clips you already picked.
 
 ```lua
 local result, err = AudioScape:sfxSimilar({
@@ -308,6 +317,9 @@ local result, err = AudioScape:sfxSimilar({
 
 -- Or pass an SfxTrack / Sound / asset_id string:
 local result = AudioScape:sfxSimilar(sfx.tracks[1], { limit = 10 })
+
+-- Or a list of seeds — results sound like the set as a whole:
+local result = AudioScape:sfxSimilar({ "9083837523", "18672006515" }, { limit = 10 })
 ```
 
 ### `AudioScape:getSfxTaxonomy()`
