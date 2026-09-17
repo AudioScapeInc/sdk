@@ -91,6 +91,8 @@ export type SimilarOptions = {
 			max: number?,
 		}?,
 	}?,
+	max_score: number?,
+	dedupe: boolean?,
 }
 
 export type SfxSearchOptions = {
@@ -129,6 +131,8 @@ export type SfxSimilarOptions = {
 			max: number?,
 		}?,
 	}?,
+	max_score: number?,
+	dedupe: boolean?,
 }
 
 -- Anything you can extract an asset_id from. The table arm uses an open
@@ -2387,6 +2391,8 @@ function AudioScape.enableClientAccess(self: AudioScapeInstance)
 			limit = options.limit,
 			offset = options.offset,
 			filters = options.filters,
+			max_score = options.max_score,
+			dedupe = options.dedupe,
 			playerId = player.UserId,
 		})
 	end)
@@ -2435,6 +2441,8 @@ function AudioScape.enableClientAccess(self: AudioScapeInstance)
 			limit = options.limit,
 			offset = options.offset,
 			filters = options.filters,
+			max_score = options.max_score,
+			dedupe = options.dedupe,
 			playerId = player.UserId,
 		})
 	end)
