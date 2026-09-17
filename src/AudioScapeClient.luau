@@ -38,6 +38,11 @@ end
 -- beyond asset_id) typecheck under strict mode.
 export type AssetIdResolvable = string | { asset_id: string, [string]: any } | Sound | AudioPlayer
 
+-- Seed-list forms of similar / sfxSimilar (mirrors src/init.luau): an array
+-- of AssetIdResolvable, or an options table carrying `asset_ids`.
+export type SeedList = { AssetIdResolvable }
+export type SimilarInput = AssetIdResolvable | SeedList | { asset_ids: SeedList, [string]: any }
+
 type AudioScapeClientInstance = typeof(setmetatable(
 	{} :: {
 		-- Optional because the module itself starts unresolved and fills this
@@ -110,6 +115,35 @@ local function resolveAssetId(input: any): string?
 	return nil
 end
 
+-- Mirrored from src/init.luau (see resolveSeedIds there): (nil, nil) when
+-- `input` is not a seed list, (nil, reason) when an element doesn't resolve,
+-- (ids, nil) otherwise.
+local function resolveSeedIds(input: any): ({ string }?, string?)
+	if type(input) ~= "table" or input.asset_id ~= nil then
+		return nil, nil
+	end
+	local list: any
+	if type(input.asset_ids) == "table" then
+		list = input.asset_ids
+	elseif #input > 0 then
+		list = input
+	else
+		return nil, nil
+	end
+	local ids: { string } = {}
+	for i, item in ipairs(list) do
+		local id = resolveAssetId(item)
+		if not id then
+			return nil, string.format("asset_ids[%d] is not an asset_id string, a track table, a Sound, or an AudioPlayer", i)
+		end
+		table.insert(ids, id)
+	end
+	if #ids == 0 then
+		return nil, "asset_ids must be a non-empty list"
+	end
+	return ids, nil
+end
+
 -- Search the catalog. Pass `query` for free-text/natural-language search, or
 -- `asset_ids` for a direct batch lookup of up to 100 IDs (filters bypassed,
 -- results in input order, missing IDs surfaced in `meta.missing_ids`).
@@ -138,13 +172,14 @@ function AudioScapeClient.lookup(self: AudioScapeClientInstance, options: { asse
 end
 
 -- Find tracks that sound similar to a given track. Polymorphic input —
--- pass an asset_id string, a Track table, a Sound, or an AudioPlayer; pass
--- `extras` when you want limit/offset/filters and didn't use the legacy
--- options-table form. `max_score`/`dedupe` filter near-duplicate matches
--- of the seed track from the results.
+-- pass an asset_id string, a Track table, a Sound, or an AudioPlayer, or a
+-- list of those to get tracks that sound like the whole set; pass `extras`
+-- when you want limit/offset/filters and didn't use the legacy options-table
+-- form. `max_score`/`dedupe` filter near-duplicate matches of the seed track
+-- from the results.
 function AudioScapeClient.similar(
 	self: AudioScapeClientInstance,
-	input: AssetIdResolvable,
+	input: SimilarInput,
 	extras: {
 		limit: number?,
 		offset: number?,
@@ -153,13 +188,18 @@ function AudioScapeClient.similar(
 		dedupe: boolean?,
 	}?
 ): (any, string?)
-	local assetId = resolveAssetId(input)
-	if not assetId then
-		return nil, "similar requires an asset_id string, a track table, a Sound, or an AudioPlayer"
+	local seedIds, seedErr = resolveSeedIds(input)
+	if seedErr then
+		return nil, "similar " .. seedErr
+	end
+	local assetId = if seedIds then nil else resolveAssetId(input)
+	if not seedIds and not assetId then
+		return nil, "similar requires an asset_id string, a track table, a Sound, or an AudioPlayer, or a list of them"
 	end
 	local opts: any = extras or (type(input) == "table" and input or {})
 	return invoke(getRemotes(self), "Similar", {
 		asset_id = assetId,
+		asset_ids = seedIds,
 		limit = opts.limit,
 		offset = opts.offset,
 		filters = opts.filters,
@@ -182,7 +222,7 @@ end
 -- SFX libraries with many uploads of the same generic clip.
 function AudioScapeClient.sfxSimilar(
 	self: AudioScapeClientInstance,
-	input: AssetIdResolvable,
+	input: SimilarInput,
 	extras: {
 		limit: number?,
 		offset: number?,
@@ -191,13 +231,18 @@ function AudioScapeClient.sfxSimilar(
 		dedupe: boolean?,
 	}?
 ): (any, string?)
-	local assetId = resolveAssetId(input)
-	if not assetId then
-		return nil, "sfxSimilar requires an asset_id string, a track table, a Sound, or an AudioPlayer"
+	local seedIds, seedErr = resolveSeedIds(input)
+	if seedErr then
+		return nil, "sfxSimilar " .. seedErr
+	end
+	local assetId = if seedIds then nil else resolveAssetId(input)
+	if not seedIds and not assetId then
+		return nil, "sfxSimilar requires an asset_id string, a track table, a Sound, or an AudioPlayer, or a list of them"
 	end
 	local opts: any = extras or (type(input) == "table" and input or {})
 	return invoke(getRemotes(self), "SfxSimilar", {
 		asset_id = assetId,
+		asset_ids = seedIds,
 		limit = opts.limit,
 		offset = opts.offset,
 		filters = opts.filters,

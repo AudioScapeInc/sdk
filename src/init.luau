@@ -77,7 +77,10 @@ export type LookupOptions = {
 }
 
 export type SimilarOptions = {
-	asset_id: string,
+	asset_id: string?,
+	-- Seed list (up to 100): results sound like the set as a whole. Use
+	-- instead of asset_id.
+	asset_ids: { AssetIdResolvable }?,
 	limit: number?,
 	offset: number?,
 	playerId: number?,
@@ -88,6 +91,8 @@ export type SimilarOptions = {
 			max: number?,
 		}?,
 	}?,
+	max_score: number?,
+	dedupe: boolean?,
 }
 
 export type SfxSearchOptions = {
@@ -111,7 +116,10 @@ export type SfxSearchOptions = {
 }
 
 export type SfxSimilarOptions = {
-	asset_id: string,
+	asset_id: string?,
+	-- Seed list (up to 100): results sound like the set as a whole. Use
+	-- instead of asset_id.
+	asset_ids: { AssetIdResolvable }?,
 	limit: number?,
 	offset: number?,
 	playerId: number?,
@@ -123,6 +131,8 @@ export type SfxSimilarOptions = {
 			max: number?,
 		}?,
 	}?,
+	max_score: number?,
+	dedupe: boolean?,
 }
 
 -- Anything you can extract an asset_id from. The table arm uses an open
@@ -130,6 +140,14 @@ export type SfxSimilarOptions = {
 -- SfxSimilarOptions — all have extra fields beyond asset_id) typecheck under
 -- strict mode without a sealed-table mismatch.
 export type AssetIdResolvable = string | { asset_id: string, [string]: any } | Sound | AudioPlayer
+
+-- Seed-list forms of similar / sfxSimilar: an array of anything
+-- AssetIdResolvable (`{ track1, track2 }`, a playlist's tracks), or the
+-- options table carrying `asset_ids`. The API blends the seeds into one
+-- acoustic profile.
+export type SeedList = { AssetIdResolvable }
+export type SimilarInput = AssetIdResolvable | SeedList | SimilarOptions
+export type SfxSimilarInput = AssetIdResolvable | SeedList | SfxSimilarOptions
 
 -- "Extras" mirror the legacy *Options shapes minus asset_id. Used as the
 -- optional second positional arg in the polymorphic forms — when you pass a
@@ -260,6 +278,10 @@ export type SimilarResult = {
 		total: number,
 		limit: number,
 		offset: number,
+		-- asset_ids requests only: seeds that resolved, and the ids skipped
+		-- (unknown, not yet analyzed, or not public).
+		seeds_used: number?,
+		seeds_ignored: { string }?,
 	},
 }
 
@@ -297,6 +319,10 @@ export type SfxSimilarResult = {
 		total: number,
 		limit: number,
 		offset: number,
+		-- asset_ids requests only: seeds that resolved, and the ids skipped
+		-- (unknown, not yet analyzed, or not public).
+		seeds_used: number?,
+		seeds_ignored: { string }?,
 	},
 }
 
@@ -668,6 +694,39 @@ local function resolveAssetId(input: any): string?
 	end
 
 	return nil
+end
+
+-- Seed-list arm of similar / sfxSimilar: an array of AssetIdResolvable
+-- (`{ "123", track, sound }`) or an options table carrying `asset_ids`.
+-- Returns (nil, nil) when `input` is not a seed list at all, so the caller
+-- falls through to the single-seed arms; (nil, reason) when it is one but an
+-- element doesn't resolve; (ids, nil) otherwise. Checked before
+-- resolveAssetId, which returns nil for any table without `asset_id`.
+-- Mirrored in src/AudioScapeClient.luau, same trade-off as resolveAssetId.
+local function resolveSeedIds(input: any): ({ string }?, string?)
+	if type(input) ~= "table" or input.asset_id ~= nil then
+		return nil, nil
+	end
+	local list: any
+	if type(input.asset_ids) == "table" then
+		list = input.asset_ids
+	elseif #input > 0 then
+		list = input
+	else
+		return nil, nil
+	end
+	local ids: { string } = {}
+	for i, item in ipairs(list) do
+		local id = resolveAssetId(item)
+		if not id then
+			return nil, string.format("asset_ids[%d] is not an asset_id string, a track table, a Sound, or an AudioPlayer", i)
+		end
+		table.insert(ids, id)
+	end
+	if #ids == 0 then
+		return nil, "asset_ids must be a non-empty list"
+	end
+	return ids, nil
 end
 
 local function request(
@@ -1189,25 +1248,34 @@ function AudioScape.lookup(self: AudioScapeInstance, options: LookupOptions): (S
 end
 
 -- Polymorphic input: pass an asset_id string, a Track-shaped table, a Sound,
--- or an AudioPlayer. `extras` carries limit/offset/filters/playerId; if you
--- pass the legacy options table (`{ asset_id, limit, ... }`) those fields are
--- read from the input itself when `extras` is omitted.
+-- or an AudioPlayer — or a list of those (`playlist.tracks`) to get tracks
+-- that sound like the whole set. `extras` carries limit/offset/filters/
+-- playerId; if you pass the legacy options table (`{ asset_id, limit, ... }`
+-- or `{ asset_ids, limit, ... }`) those fields are read from the input itself
+-- when `extras` is omitted.
 function AudioScape.similar(
 	self: AudioScapeInstance,
-	input: AssetIdResolvable,
+	input: SimilarInput,
 	extras: SimilarExtras?
 ): (SimilarResult?, string?)
-	local assetId = resolveAssetId(input)
-	if not assetId then
-		return nil, "similar requires an asset_id string, a track table, a Sound, or an AudioPlayer"
+	local seedIds, seedErr = resolveSeedIds(input)
+	if seedErr then
+		return nil, "similar " .. seedErr
+	end
+	local assetId = if seedIds then nil else resolveAssetId(input)
+	if not seedIds and not assetId then
+		return nil, "similar requires an asset_id string, a track table, a Sound, or an AudioPlayer, or a list of them"
 	end
 
 	local opts: any = extras or (type(input) == "table" and input or {})
 
 	-- GET so CloudFront edge-caches. dedupe=false is omitted (no point
-	-- sending the no-op default — keeps the cache key clean).
+	-- sending the no-op default — keeps the cache key clean). A seed list
+	-- ships as one comma-separated param: the API takes a CSV, and buildQuery
+	-- would JSON-encode a table.
 	return requestGet(self, "/v1/similar", {
 		asset_id = assetId,
+		asset_ids = if seedIds then table.concat(seedIds, ",") else nil,
 		limit = opts.limit,
 		offset = opts.offset,
 		filters = opts.filters,
@@ -1249,20 +1317,26 @@ end
 -- input — see similar() for the (input, extras?) contract.
 function AudioScape.sfxSimilar(
 	self: AudioScapeInstance,
-	input: AssetIdResolvable,
+	input: SfxSimilarInput,
 	extras: SfxSimilarExtras?
 ): (SfxSimilarResult?, string?)
-	local assetId = resolveAssetId(input)
-	if not assetId then
-		return nil, "sfxSimilar requires an asset_id string, a track table, a Sound, or an AudioPlayer"
+	local seedIds, seedErr = resolveSeedIds(input)
+	if seedErr then
+		return nil, "sfxSimilar " .. seedErr
+	end
+	local assetId = if seedIds then nil else resolveAssetId(input)
+	if not seedIds and not assetId then
+		return nil, "sfxSimilar requires an asset_id string, a track table, a Sound, or an AudioPlayer, or a list of them"
 	end
 
 	local opts: any = extras or (type(input) == "table" and input or {})
 
 	-- GET so CloudFront edge-caches. dedupe=false is omitted (no point
-	-- sending the no-op default — keeps the cache key clean).
+	-- sending the no-op default — keeps the cache key clean). Seed list as a
+	-- CSV, same as similar.
 	return requestGet(self, "/v1/sfx/similar", {
 		asset_id = assetId,
+		asset_ids = if seedIds then table.concat(seedIds, ",") else nil,
 		limit = opts.limit,
 		offset = opts.offset,
 		filters = opts.filters,
@@ -2308,14 +2382,17 @@ function AudioScape.enableClientAccess(self: AudioScapeInstance)
 		if not checkRateLimit(player) then
 			return nil, "Rate limited — please wait before making another request"
 		end
-		if type(options) ~= "table" or type(options.asset_id) ~= "string" then
-			return nil, "similar requires a table with an asset_id string"
+		if type(options) ~= "table" or (type(options.asset_id) ~= "string" and type(options.asset_ids) ~= "table") then
+			return nil, "similar requires a table with an asset_id string or an asset_ids list"
 		end
 		return self:similar({
 			asset_id = options.asset_id,
+			asset_ids = options.asset_ids,
 			limit = options.limit,
 			offset = options.offset,
 			filters = options.filters,
+			max_score = options.max_score,
+			dedupe = options.dedupe,
 			playerId = player.UserId,
 		})
 	end)
@@ -2355,14 +2432,17 @@ function AudioScape.enableClientAccess(self: AudioScapeInstance)
 		if not checkRateLimit(player) then
 			return nil, "Rate limited — please wait before making another request"
 		end
-		if type(options) ~= "table" or type(options.asset_id) ~= "string" then
-			return nil, "sfxSimilar requires a table with an asset_id string"
+		if type(options) ~= "table" or (type(options.asset_id) ~= "string" and type(options.asset_ids) ~= "table") then
+			return nil, "sfxSimilar requires a table with an asset_id string or an asset_ids list"
 		end
 		return self:sfxSimilar({
 			asset_id = options.asset_id,
+			asset_ids = options.asset_ids,
 			limit = options.limit,
 			offset = options.offset,
 			filters = options.filters,
+			max_score = options.max_score,
+			dedupe = options.dedupe,
 			playerId = player.UserId,
 		})
 	end)

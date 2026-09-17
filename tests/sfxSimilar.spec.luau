@@ -186,3 +186,42 @@ do
 	local q = decodeQuery(http.requests[1].url)
 	assert(q.max_score == "0.95", "extras.max_score wins; got: " .. tostring(q.max_score))
 end
+
+-- 11. Seed list: array input → asset_ids CSV on the wire, no asset_id
+do
+	local http = mockHttp.new()
+	local sdk = loadSdk({ http = http })
+	local client = (sdk :: any).new("test-key")
+
+	http:queueResponse(emptyResponse())
+	-- Mixed list (string + SfxTrack-shaped table): annotate so strict mode
+	-- doesn't infer `{ string }` from the first element.
+	local seeds: { any } = { "9083837523", { asset_id = "18672006515" } }
+	local result, err = client:sfxSimilar(seeds, { limit = 10 })
+	assert(result and not err, "seed list should succeed; err: " .. tostring(err))
+
+	local q = decodeQuery(http.requests[1].url)
+	assert(
+		q.asset_ids == "9083837523,18672006515",
+		"seed list → asset_ids CSV on the wire; got: " .. tostring(q.asset_ids)
+	)
+	assert(q.asset_id == nil, "seed list sends no asset_id; got: " .. tostring(q.asset_id))
+	assert(q.limit == "10", "extras.limit carried with a seed list; got: " .. tostring(q.limit))
+end
+
+-- 12. Seed list: legacy options-table form; bad element rejected pre-flight
+do
+	local http = mockHttp.new()
+	local sdk = loadSdk({ http = http })
+	local client = (sdk :: any).new("test-key")
+
+	http:queueResponse(emptyResponse())
+	client:sfxSimilar({ asset_ids = { "1", "2" }, limit = 3, filters = { categories = { "foley" } } })
+	local q = decodeQuery(http.requests[1].url)
+	assert(q.asset_ids == "1,2", "options-table asset_ids → CSV; got: " .. tostring(q.asset_ids))
+	assert(q.filters and q.filters:find("foley", 1, true), "options-table filters carried; got: " .. tostring(q.filters))
+
+	local r, e = client:sfxSimilar({ "1", "" })
+	assert(r == nil and e and e:find("asset_ids[2]", 1, true), "empty-string element named by index; got: " .. tostring(e))
+	assert(#http.requests == 1, "no HTTP for an invalid seed list")
+end
